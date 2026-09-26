@@ -12,6 +12,23 @@ from . import util, recognize
 from .classify import cluster_key
 
 
+# Windows 云占位属性:OFFLINE(0x1000) 与 RECALL_ON_DATA_ACCESS(0x400000)
+_CLOUD_MASK = 0x401000
+
+
+def is_cloud_placeholder(path, st=None):
+    """是否云盘占位文件(读取会触发整文件下载)。非 Windows 恒 False。"""
+    if os.name != "nt":
+        return False
+    try:
+        if st is None:
+            st = os.stat(path)
+        fa = getattr(st, "st_file_attributes", 0)
+        return bool(fa & _CLOUD_MASK)
+    except OSError:
+        return False
+
+
 def _normcase(p):
     return os.path.normcase(os.path.normpath(p))
 
@@ -81,9 +98,12 @@ def scan_roots(roots, deep_video=True, progress=None, cancel=None,
             "mtime_dt": datetime.fromtimestamp(mtime).strftime("%Y-%m-%d"),
             "dt": "", "lat": "", "lon": "", "cam": "",
             "dur": "", "res": "", "dhash": "", "score": 0.0,
+            "cloud": is_cloud_placeholder(p),
         }
         try:
-            if kind == "photo":
+            if rec.get("cloud"):
+                pass  # 云占位符:不读内容(读取会触发整文件下载),仅按文件名分类
+            elif kind == "photo":
                 rec["dt"], rec["lat"], rec["lon"], rec["cam"] = util.exif_of(p)
                 rec["dhash"] = util.dhash(p)
                 rec["score"] = util.quality_score(p)

@@ -11,8 +11,8 @@ def find_exact_dups(files, progress=None):
     files: 记录列表(含 path/size)。返回 [[rec, ...], ...] 仅保留组员>1 的组。"""
     by_size = defaultdict(list)
     for f in files:
-        if f.get("kind") in ("doc", "broken"):
-            continue
+        if f.get("kind") in ("doc", "broken") or f.get("cloud"):
+            continue  # 云占位符读内容会触发下载,不参与精确去重
         by_size[f["size"]].append(f)
     groups = []
     sizes = sorted((s for s, lst in by_size.items() if len(lst) > 1), reverse=True)

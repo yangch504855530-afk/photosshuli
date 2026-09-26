@@ -327,6 +327,40 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     return
                 parent = os.path.dirname(p) if os.path.dirname(p) != p else None
                 self._json({"path": p, "dirs": dirs, "parent": parent})
+            elif u.path == "/api/report":
+                # 整理报告(Markdown):库概况/类别构成/重复与建议/决策统计
+                import hashlib as _h
+                st = app.stats()
+                dec = app.store.load_decisions()
+                lines = [f"# photosshuli 整理报告",
+                         f"",
+                         f"- 生成时间:{util.ts()}",
+                         f"- 扫描根:{'; '.join(app.roots) if app.roots else '(无)'}",
+                         f"- 文件总数:{st['total']} / {st['bytes']/1073741824:.2f} GiB",
+                         f"- 三无文件:{st['no_meta']}",
+                         f"", f"## 内容构成", f"",
+                         f"| 类别 | 数量 |", f"|---|---|"]
+                for k, v in sorted(st["cls"].items(), key=lambda kv: -kv[1]):
+                    lines.append(f"| {k} | {v} |")
+                lines += [f"", f"## 重复与相似", f""]
+                dgs = app.dup_groups()
+                lines.append(f"- 精确重复组:{len(dgs)} 组")
+                if dgs:
+                    lines.append(f"- 可释放(按保留规则):"
+                                 f"{sum(sum(m['size'] for m in g['members']) - g['members'][0]['size'] for g in dgs)/1073741824:.2f} GiB")
+                lines.append(f"- 相似组:{len(app.similar_groups())} 组")
+                lines += [f"", f"## 决策统计", f"",
+                          f"- 已决策:{len(dec)} 项",
+                          f"- 回收站:{sum(1 for v in dec.values() if v.get('action')=='recycle')}",
+                          f"- 归档:{sum(1 for v in dec.values() if v.get('action')=='archive')}"]
+                body = chr(10).join(lines).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/markdown; charset=utf-8")
+                self.send_header("Content-Disposition",
+                                 "attachment; filename=photosshuli-report.md")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
             elif u.path == "/api/restore/list":
                 log = os.path.join(app.store.dir, "applied_log.csv")
                 self._json({"items": recycle.find_restorable(log)})
@@ -544,6 +578,46 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 names[key] = name
                 app.store.save_settings(app.settings)
                 self._json({"ok": True, "name": name})
+            elif self.path == "/api/compare":
+                # 目录级重复对比(只读):A/B 两目录按 文件名+大小 比对
+                import os as _os
+                a = (body.get("a") or "").strip()
+                b = (body.get("b") or "").strip()
+                if not (_os.path.isdir(a) and _os.path.isdir(b)):
+                    self._json({"error": "目录不存在"}, 400)
+                    return
+
+                def walk_files(root):
+                    out = {}
+                    for dp, dns, fns in _os.walk(root):
+                        dns[:] = [x for x in dns
+                                  if x not in C.SKIP_DIRS and not x.startswith(".")]
+                        for fn in fns:
+                            p2 = _os.path.join(dp, fn)
+                            try:
+                                st2 = _os.stat(p2)
+                            except OSError:
+                                continue
+                            out[fn + ":" + str(st2.st_size)] = p2
+                    return out
+
+                fa, fb = walk_files(a), walk_files(b)
+                common = set(fa) & set(fb)
+                a_only, b_only = set(fa) - set(fb), set(fb) - set(fa)
+                cb = sum(_os.path.getsize(fa[k]) for k in common)
+                self._json({
+                    "a": a, "b": b,
+                    "aCount": len(fa), "bCount": len(fb),
+                    "matched": len(common),
+                    "matchedBytes": cb,
+                    "aOnlyCount": len(a_only),
+                    "bOnlyCount": len(b_only),
+                    "aOnlyBytes": sum(_os.path.getsize(fa[k]) for k in a_only),
+                    "bOnlyBytes": sum(_os.path.getsize(fb[k]) for k in b_only),
+                    "matchedSample": [fa[k] for k in list(common)[:50]],
+                    "aOnlySample": [fa[k] for k in list(a_only)[:50]],
+                    "bOnlySample": [fb[k] for k in list(b_only)[:50]],
+                })
             elif self.path == "/api/restore/list":
                 log = os.path.join(app.store.dir, "applied_log.csv")
                 self._json({"items": recycle.find_restorable(log)})

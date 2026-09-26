@@ -78,6 +78,7 @@
     <button data-t="3">相似合并<span class="bdg" id="b3" style="display:none"></span></button>
     <button data-t="4">分类归档<span class="bdg" id="b4" style="display:none"></span></button>
     <button data-t="5">执行<span class="bdg" id="b5" style="display:none"></span></button>
+    <button data-t="6">工具</button>
   </div>
 </header>
 <div id="banner"></div>
@@ -171,6 +172,24 @@
     <div style="margin:10px 0"><button id="archMore" onclick="archPage++;drawArchGrid()" style="display:none">加载更多</button></div>
   </div>
 
+  <div id="t6" style="display:none">
+    <div class="panel"><h3>目录级重复对比</h3>
+      <div class="dim">对比两个文件夹:按"文件名+大小"统计两边一致/各自独有(只读,不移动任何文件)。适合排查"欧洲行 vs 欧洲行-整理"这类疑似重复目录。</div>
+      <div class="bar" style="margin:8px 0">
+        <input id="cmpA" size="30" placeholder="目录 A(疑似副本)">
+        <input id="cmpB" size="30" placeholder="目录 B(疑似母本)">
+        <button class="primary" onclick="doCompare()">开始对比</button>
+      </div>
+      <div id="cmpOut" class="dim">输入两个目录后开始。</div>
+    </div>
+    <div class="panel"><h3>整理报告</h3>
+      <div class="bar"><button onclick="window.open('/api/report')">导出整理报告(Markdown)</button>
+      <span class="dim">包含库概况、内容构成、重复与相似统计、决策统计</span></div>
+    </div>
+    <div class="panel"><h3>云占位说明</h3>
+      <div class="dim">云盘占位文件(OneDrive/WPS 等未下载的云文件)自动识别为 ☁ 占位:不读取内容、不参与精确去重,避免触发整文件下载。</div>
+    </div>
+  </div>
   <div id="t5" style="display:none">
     <div class="panel"><h3>🪄 一键整理向导</h3>
       <div class="bar"><button class="primary" onclick="wizard()">生成推荐方案(自动采纳建议+确认重复/相似组)</button>
@@ -309,7 +328,7 @@ function card(f,extraBtns=""){
     <div class="meta"><div class="nm" title="${esc(f.path)}">${esc(f.name)}</div>
       <div class="ln">${fmtB(f.size)} · ${f.ext||f.kind} ${f.dur?"· "+f.dur:""}</div>
       <div class="ln">${f.dt?"📅 "+esc(f.dt):(f.mtime_dt?"🕓 "+f.mtime_dt:"")}</div>
-      <div><span class="badge">${esc(f.cls)}</span>${f.cluster?`<span class="badge">📍${esc(f.cluster)}</span>`:""}${sug[2]?`<span class="badge">${esc(sug[2])}</span>`:""}${f.ai?`<span class="badge" style="background:#5b9bd5;color:#fff">🤖${esc(f.ai.category)}</span>`:""}${f.ai&&f.ai.quality&&f.ai.quality!=="无"?`<span class="badge">${esc(f.ai.quality)}</span>`:""}${f.ai&&f.ai.suggest==="可删"?'<span class="badge del">AI建议删</span>':""}</div>
+      <div><span class="badge">${esc(f.cls)}</span>${f.cloud?'<span class="badge">☁ 占位</span>':""}${f.cluster?`<span class="badge">📍${esc(f.cluster)}</span>`:""}${sug[2]?`<span class="badge">${esc(sug[2])}</span>`:""}${f.ai?`<span class="badge" style="background:#5b9bd5;color:#fff">🤖${esc(f.ai.category)}</span>`:""}${f.ai&&f.ai.quality&&f.ai.quality!=="无"?`<span class="badge">${esc(f.ai.quality)}</span>`:""}${f.ai&&f.ai.suggest==="可删"?'<span class="badge del">AI建议删</span>':""}</div>
       <div class="ln">决策: <b class="decnow">${dec?esc(dec.action+(dec.target?"→"+dec.target:"")):"未决策"}</b></div></div>
     <div class="acts"><button class="danger" onclick="decide('${jsq(f.path)}','recycle')">回收站</button>
       <button class="good" onclick="decide('${jsq(f.path)}','keep')">保留</button>
@@ -586,6 +605,25 @@ async function doApply(){if(!confirm("确认执行?删除项将移入各扫描�
   refresh();loadPlan();}
 async function doExport(){const r=await api("/api/export");toast(`已导出 ${r.count} 条 → ${r.file}`);}
 
+/* ---------- 工具:目录对比 ---------- */
+async function doCompare(){
+  const a=$("cmpA").value.trim(),b=$("cmpB").value.trim();
+  if(!a||!b){toast("请填入两个目录");return;}
+  $("cmpOut").textContent="对比中…";
+  try{const r=await api("/api/compare",{a,b});
+    if(r.error){$("cmpOut").textContent="错误:"+r.error;return;}
+    const gb=x=>(x/1073741824).toFixed(2)+" GiB";
+    let h=`<table><tr><th>项</th><th>目录A</th><th>目录B</th></tr>
+      <tr><td>文件数</td><td>${r.aCount}</td><td>${r.bCount}</td></tr>
+      <tr><td>两边一致(文件名+大小)</td><td colspan="2"><b>${r.matched}</b> 个 / ${gb(r.matchedBytes)}</td></tr>
+      <tr><td>仅A独有</td><td>${r.aOnlyCount} 个 / ${gb(r.aOnlyBytes)}</td><td>—</td></tr>
+      <tr><td>仅B独有</td><td>—</td><td>${r.bOnlyCount} 个 / ${gb(r.bOnlyBytes)}</td></tr></table>`;
+    h+=`<div class="dim" style="margin:6px 0">A 独有样例(前20):</div>`+r.aOnlySample.slice(0,20).map(x=>`<div class="ln">${esc(x)}</div>`).join("");
+    h+=`<div class="dim" style="margin:6px 0">B 独有样例(前20):</div>`+r.bOnlySample.slice(0,20).map(x=>`<div class="ln">${esc(x)}</div>`).join("");
+    $("cmpOut").innerHTML=h;
+    toast("对比完成:一致 "+r.matched+" 个");}
+  catch(e){$("cmpOut").textContent="对比失败:"+e.message;}}
+
 /* ---------- 目录选择器 ---------- */
 function openPicker(){$("pickMask").style.display="block";$("pickDlg").style.display="flex";
   fetch("/api/drives").then(r=>r.json()).then(d=>{window._drives=d.drives;pickGo(d.drives[0]||"");});}
@@ -609,7 +647,7 @@ function pickAdd(){
 document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>setTab(+b.dataset.t));
 function setTab(i){try{localStorage.setItem("pshuli_tab",i)}catch(e){}
   document.querySelectorAll(".tabs button").forEach(x=>x.classList.toggle("on",+x.dataset.t===i));
-  for(let j=0;j<6;j++)$("t"+j).style.display=(i===j)?"":"none";
+  for(let j=0;j<7;j++)$("t"+j).style.display=(i===j)?"":"none";
   if(i===5)loadPlan();}
 try{const saved=parseInt(localStorage.getItem("pshuli_tab"));if(saved>=0&&saved<=5)setTab(saved);}catch(e){}
 refresh();
