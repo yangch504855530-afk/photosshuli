@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.photosshuli/
+*.log
+dist/
+build/
+*.egg-info/

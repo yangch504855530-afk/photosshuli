@@ -1,0 +1,80 @@
+# -*- coding: utf-8 -*-
+"""回收站执行:决策 → 计划预览 → 执行移动(同盘移入 回收站目录,可找回)"""
+import csv
+import io
+import os
+import shutil
+
+from . import config as C
+from . import util
+
+
+def build_plan(files, decisions):
+    """files: 索引记录列表;decisions: {path:{action,target}}。
+    返回 plan 条目列表 + 汇总。action: recycle / archive / keep(忽略)"""
+    by_path = {f["path"]: f for f in files}
+    plan = []
+    for path, dec in decisions.items():
+        action = dec.get("action", "")
+        rec = by_path.get(path)
+        src = path if os.path.exists(path) else None
+        if action == "recycle":
+            root = (rec or {}).get("root") or os.path.splitdrive(path)[0] + os.sep
+            rel = (rec or {}).get("rel") or os.path.basename(path)
+            dst = os.path.join(root, C.RECYCLE_DIR, rel.replace("/", os.sep))
+        elif action == "archive":
+            dst = os.path.join(dec.get("target") or "", os.path.basename(path))
+        else:
+            continue
+        plan.append({"path": path, "src": src, "dst": dst, "action": action,
+                     "size": (rec or {}).get("size", 0)})
+    return plan
+
+
+def plan_summary(plan):
+    ok = [p for p in plan if p["src"]]
+    miss = [p for p in plan if not p["src"]]
+    bytes_ = sum(p["size"] for p in ok)
+    return {"count": len(plan), "missing": len(miss),
+            "bytes": bytes_, "recycle": sum(1 for p in plan if p["action"] == "recycle"),
+            "archive": sum(1 for p in plan if p["action"] == "archive")}
+
+
+def unique_path(p):
+    if not os.path.exists(p):
+        return p
+    b, e = os.path.splitext(p)
+    for i in range(1, 999):
+        q = f"{b}_{i}{e}"
+        if not os.path.exists(q):
+            return q
+    return p + ".dup"
+
+
+def execute(plan, log_path):
+    """执行移动。返回 {ok, fail, skip}"""
+    res = {"ok": 0, "fail": 0, "skip": 0}
+    logf = io.open(log_path, "a", encoding="utf-8-sig", newline="")
+    w = csv.writer(logf)
+    if logf.tell() == 0:
+        w.writerow(["时间", "路径", "动作", "源", "目标", "结果"])
+    for item in plan:
+        t = util.ts()
+        if not item["src"]:
+            w.writerow([t, item["path"], item["action"], "", item["dst"], "源缺失·跳过"])
+            res["skip"] += 1
+            continue
+        if os.path.normcase(os.path.abspath(item["src"])) == os.path.normcase(os.path.abspath(item["dst"])):
+            w.writerow([t, item["path"], item["action"], item["src"], item["dst"], "原地·跳过"])
+            res["skip"] += 1
+            continue
+        try:
+            os.makedirs(os.path.dirname(item["dst"]), exist_ok=True)
+            shutil.move(item["src"], unique_path(item["dst"]))
+            w.writerow([t, item["path"], item["action"], item["src"], item["dst"], "OK"])
+            res["ok"] += 1
+        except Exception as e:
+            w.writerow([t, item["path"], item["action"], item["src"], item["dst"], f"失败:{e}"])
+            res["fail"] += 1
+    logf.close()
+    return res
