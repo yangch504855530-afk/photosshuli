@@ -72,6 +72,24 @@ class App:
     def ai_tag_key(self, rec):
         return f"{rec.get('size')}:{rec.get('mtime')}"
 
+    def ai_ping(self):
+        """连接测试:消耗 1 次调用"""
+        err = self._ai_guard()
+        if err:
+            return {"error": err}
+        srcs = [f for f in self.files if f.get("kind") in ("photo", "livp", "video")]
+        if not srcs:
+            return {"error": "索引里没有图片可测"}
+        src = self._ai_source(srcs[0])
+        b = aimod.b64_of_image(src)
+        cli = self.make_ai_client()
+        try:
+            reply = cli.chat_vision([b], "请只回复两个字:正常")
+            self._bump_ai_calls(1)
+            return {"ok": True, "reply": (reply or "").strip()[:20], "model": cli.model}
+        except Exception as e:  # noqa: BLE001
+            return {"error": f"连接失败:{e}"}
+
     def merge_ai_tags(self, files):
         tags = self.store.load_ai_tags()
         if not tags:
@@ -265,6 +283,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 })
             elif u.path == "/api/scanstatus":
                 self._json(app.scan_status)
+            elif u.path == "/api/ai/ping":
+                r = app.ai_ping()
+                self._json(r, 400 if "error" in r else 200)
             elif u.path == "/api/ai/status":
                 s = app.settings
                 calls = s.get("ai_calls", {})
@@ -343,6 +364,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._json({"ok": True, "status": app.scan_status})
             elif self.path == "/api/settings":
                 s = app.settings
+                old_cluster_names = dict(s.get("cluster_names", {}))
                 for k in ("priorities", "similar_threshold", "cluster_names",
                           "dup_picks", "sim_picks", "deep_video", "auto_preheat",
                           "ai_consent", "ai_key", "ai_model", "ai_base_url", "ai_daily_cap"):
@@ -352,6 +374,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     s["roots"] = util.parse_roots(body["roots"])
                 if "priorities" in body:
                     s["priorities"] = util.parse_roots(body["priorities"])
+                if "cluster_names" in body:
+                    old_names = old_cluster_names
+                    new_names = body["cluster_names"] or {}
+                    s["cluster_names"] = new_names
+                    # 簇改名 → 同步既有归档决策里的目标路径
+                    d = app.store.load_decisions()
+                    changed = False
+                    for k, old_nm in old_names.items():
+                        new_nm = new_names.get(k, "")
+                        if old_nm and new_nm and old_nm != new_nm:
+                            for p, dec in d.items():
+                                if dec.get("action") == "archive" and old_nm in (dec.get("target") or ""):
+                                    dec["target"] = dec["target"].replace(old_nm, new_nm)
+                                    changed = True
+                    if changed:
+                        app.store.save_decisions(d)
                 app.store.save_settings(s)
                 self._json({"ok": True, "settings": s})
             elif self.path == "/api/decide":
@@ -376,11 +414,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     self._json({"error": "group not found"}, 404)
                     return
                 d = app.store.load_decisions()
+                n = 0
                 for m in g["members"]:
-                    if m["path"] != g["keeper"]["path"]:
-                        d[m["path"]] = {"action": "recycle", "target": "", "time": util.ts()}
+                    if m["path"] == g["keeper"]["path"]:
+                        continue
+                    if d.get(m["path"], {}).get("action") == "keep":
+                        continue  # 用户明确要保留的,确认不覆盖
+                    d[m["path"]] = {"action": "recycle", "target": "", "time": util.ts()}
+                    n += 1
                 app.store.save_decisions(d)
-                self._json({"ok": True, "group": gid})
+                self._json({"ok": True, "group": gid, "marked": n})
             elif self.path == "/api/simconfirm":
                 gid = body["id"]
                 g = next((x for x in app.similar_groups() if x["id"] == gid), None)
@@ -388,11 +431,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     self._json({"error": "group not found"}, 404)
                     return
                 d = app.store.load_decisions()
+                n = 0
                 for m in g["members"]:
-                    if m["path"] != g["recommended"]["path"]:
-                        d[m["path"]] = {"action": "recycle", "target": "", "time": util.ts()}
+                    if m["path"] == g["recommended"]["path"]:
+                        continue
+                    if d.get(m["path"], {}).get("action") == "keep":
+                        continue  # 用户明确要保留的,确认不覆盖
+                    d[m["path"]] = {"action": "recycle", "target": "", "time": util.ts()}
+                    n += 1
                 app.store.save_decisions(d)
-                self._json({"ok": True, "group": gid})
+                self._json({"ok": True, "group": gid, "marked": n})
             elif self.path == "/api/autosuggest":
                 sug = app.suggestions()
                 d = app.store.load_decisions()
@@ -478,6 +526,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 names[key] = name
                 app.store.save_settings(app.settings)
                 self._json({"ok": True, "name": name})
+            elif self.path == "/api/ai/ping":
+                r = app.ai_ping()
+                self._json(r, 400 if "error" in r else 200)
             elif self.path == "/api/apply":
                 plan = recycle.build_plan(app.files, app.store.load_decisions())
                 if body.get("execute"):
@@ -497,6 +548,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     app.scan_status["stale"] = bool(moved)
                     self._json({"result": res, "moved": len(moved)})
                     app._preheat_pause.set()
+                    if moved:
+                        app.run_scan()  # 自动增量重扫,索引立即跟上
                 else:
                     self._json({"plan": plan, "summary": recycle.plan_summary(plan)})
             else:

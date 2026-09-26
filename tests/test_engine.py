@@ -287,10 +287,19 @@ class TestServerEndToEnd(FixtureMixin, unittest.TestCase):
             self.assertTrue(os.path.exists(kept))
             recycle_dir = os.path.join(self.root, C.RECYCLE_DIR)
             self.assertTrue(os.path.isdir(recycle_dir))
-            # 执行后:已移动路径的决策被清空,索引标记 stale
+            # 执行后:已移动路径的决策被清空;自动增量重扫完成,stale 清除
+            for _ in range(200):
+                st = get("/api/scanstatus")
+                if not st["running"]:
+                    break
+                time.sleep(0.1)
             data3 = get("/api/data")
-            self.assertTrue(data3["scan"]["stale"])
+            self.assertFalse(data3["scan"]["stale"])
             self.assertEqual(data3["counts"]["decided"], 0)
+            moved_paths = [m["path"] for m in data["dupGroups"][0]["members"]
+                           if m["path"] != kept]
+            self.assertFalse(any(f["path"] in moved_paths for f in data3["files"]))
+            self.assertTrue(any(f["path"] == kept for f in data3["files"]))
             # 目录浏览/盘符接口
             self.assertTrue(len(get("/api/drives")["drives"]) >= 1)
             br = get("/api/browse?path=" + urllib.parse.quote(self.root))

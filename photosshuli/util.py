@@ -37,8 +37,13 @@ except Exception:
     _HEIF = False
 
 
-def open_image(path):
+def open_image(path, draft=None):
     img = Image.open(path)
+    if draft and (img.format or "").upper() == "JPEG":
+        try:
+            img.draft("RGB", draft)  # JPEG 解码时直接降采样,大图提速数倍
+        except Exception:
+            pass
     img = ImageOps.exif_transpose(img)
     return img
 
@@ -159,7 +164,7 @@ def probe_video(path):
 def dhash(path, size=8):
     """感知哈希:9x8 灰度行内比较 → 64bit 十六进制。失败返回 ''。"""
     try:
-        img = open_image(path).convert("L").resize((size + 1, size), Image.LANCZOS)
+        img = open_image(path, draft=(1024, 1024)).convert("L").resize((size + 1, size), Image.LANCZOS)
         px = img.tobytes()
         bits = 0
         for row in range(size):
@@ -181,7 +186,7 @@ def hamming(h1, h2):
 def quality_score(path):
     """技术质量评分 0~100:清晰度50% + 曝光25% + 亮度居中15% + 分辨率10%"""
     try:
-        img = open_image(path)
+        img = open_image(path, draft=(1024, 1024))
         w, h = img.size
         gray = img.convert("L").resize((256, 256), Image.LANCZOS)
         sharp = ImageStat.Stat(gray.filter(ImageFilter.FIND_EDGES)).stddev[0]

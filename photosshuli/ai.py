@@ -36,7 +36,7 @@ def b64_of_image(path, long_edge=THUMB_LONG_EDGE):
     """读图 → 缩放 → JPEG base64(视频/livp 走已有缩略图;失败返回 None)"""
     try:
         src = path
-        img = util.open_image(src)
+        img = util.open_image(src, draft=(2048, 2048))
         img.thumbnail((long_edge, long_edge))
         buf = io.BytesIO()
         img.convert("RGB").save(buf, "JPEG", quality=80)

@@ -6,6 +6,15 @@ from . import config as C
 from . import util
 
 
+def _inside(path, target):
+    """文件是否已在目标目录内(含其子目录)"""
+    if not path:
+        return False
+    p = os.path.normcase(os.path.normpath(path))
+    t = os.path.normcase(os.path.normpath(target))
+    return p == t or p.startswith(t + os.sep)
+
+
 def cluster_key(lat, lon, precision=None):
     precision = precision if precision is not None else C.CLUSTER_PRECISION
     try:
@@ -35,13 +44,18 @@ def suggest(rec, cluster_names, root):
         return ("recycle", None, f"{cls}·建议清理")
     if cls == C.CLS_DASHCAM:
         year = util.year_of(rec.get("dt")) or (rec.get("mtime_dt") or "")[:4] or "未知时间"
-        return ("archive", os.path.join(root, "行车记录仪", year), "事物:行车记录仪")
+        tgt = os.path.join(root, "行车记录仪", year)
+        if _inside(rec.get("path"), tgt):
+            return ("keep", None, "已在归档位置,无需移动")
+        return ("archive", tgt, "事物:行车记录仪")
     if rec.get("lat") and rec.get("lon"):
         key = rec.get("cluster") or cluster_key(rec["lat"], rec["lon"])
         name = cluster_names.get(key) or f"地点{key}"
         month = util.month_of(rec.get("dt")) or "未知时间"
-        return ("archive", os.path.join(root, "旅行", name, f"{month} {name}"),
-                f"地点:{name}({month})")
+        tgt = os.path.join(root, "旅行", name, f"{month} {name}")
+        if _inside(rec.get("path"), tgt):
+            return ("keep", None, "已在归档位置,无需移动")
+        return ("archive", tgt, f"地点:{name}({month})")
     if rec.get("dt"):
         year = util.year_of(rec.get("dt"))
         if year:

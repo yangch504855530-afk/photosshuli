@@ -115,6 +115,7 @@
         模型 <input id="aiModel" size="12" placeholder="glm-4.6v">
         每日上限 <input id="aiCap" type="number" style="width:64px" value="300">
         <button onclick="saveAI()">保存 AI 设置</button>
+        <button onclick="aiPing()">🤖 测试连接(消耗1次)</button>
       </div>
       <div class="dim">不开启时一切功能照常走本地规则。用于:相似组 AI 择优、内容打标、地点簇命名。</div>
     </div>
@@ -124,6 +125,7 @@
   <div id="t1" style="display:none">
     <div class="panel" id="clsPanel"></div>
     <div class="bar"><select id="clsSel"></select>
+      <select id="decSel"><option value="">全部决策状态</option><option value="none">未决策</option><option value="recycle">回收站</option><option value="keep">保留</option><option value="archive">归档</option></select>
       <span class="dim" id="clsCount"></span>
       <button class="danger" onclick="batchCls('recycle')">本类全部→回收站决策</button>
       <button class="good" onclick="batchCls('keep')">本类全部保留</button></div>
@@ -131,10 +133,14 @@
     <div style="margin:10px 0"><button id="clsMore" onclick="clsPage++;drawClsGrid()" style="display:none">加载更多</button></div>
   </div>
 
-  <div id="t2" style="display:none"><div class="dim" style="margin:4px 0">每组字节完全相同。绿框=保留者(按规则自动选),点"留这张"可改;"全部保留"=本组不删任何文件。</div><div id="dupList"></div></div>
+  <div id="t2" style="display:none"><div class="dim" style="margin:4px 0">每组字节完全相同。绿框=保留者(按规则自动选),点"留这张"可改;"全部保留"=本组不删;先标"保留"再确认的成员不会被覆盖。</div>
+    <div class="bar" style="margin:6px 0"><button class="danger" onclick="confirmAll('dup')">确认所有组(采纳当前保留者)</button><span class="dim" id="dupAllHint"></span></div>
+    <div id="dupList"></div></div>
   <div id="t3" style="display:none">
   <div class="dim" style="margin:4px 0">相似组按技术质量评分自动预选最佳(推荐徽标),确认后其余进回收站决策;"全部保留"=本组不删。AI 择优会调用智谱视觉模型挑选最符合审美的照片。</div>
-  <div class="bar" style="margin:6px 0"><button onclick="aiRankTop()">🤖 AI 择优前10组</button><span class="dim" id="aiRankHint"></span></div>
+  <div class="bar" style="margin:6px 0"><button onclick="aiRankTop()">🤖 AI 择优前10组</button>
+    <button class="danger" onclick="confirmAll('sim')">确认所有组(采纳当前推荐)</button>
+    <span class="dim" id="aiRankHint"></span><span class="dim" id="simAllHint"></span></div>
   <div id="simList"></div></div>
 
   <div id="t4" style="display:none">
@@ -147,7 +153,13 @@
     <div class="panel" id="clusterPanel"></div>
     <div class="bar">
       <select id="sugSel"></select><select id="clsSel2"></select>
+      <select id="decSel2"><option value="">全部决策状态</option><option value="none">未决策</option><option value="recycle">回收站</option><option value="keep">保留</option><option value="archive">归档</option></select>
       <input id="ftext" placeholder="搜文件名" size="10">
+    </div>
+    <div class="bar" style="margin:6px 0">
+      <span class="dim">自定义归档:</span>
+      <input id="customTarget" placeholder="扫描根下的相对路径,如 旅行\家庭" size="24">
+      <span class="dim">填写后每张卡片出现「归档到此」按钮</span>
     </div>
     <div class="cards" id="archGrid" style="margin-top:10px"></div>
     <div style="margin:10px 0"><button id="archMore" onclick="archPage++;drawArchGrid()" style="display:none">加载更多</button></div>
@@ -240,7 +252,7 @@ function renderOverview(){
 }
 async function saveSettings(){
   const r=await api("/api/settings",{priorities:$("prios").value,similar_threshold:parseInt($("thr").value||"8"),deep_video:$("deep").checked});
-  D.settings=r.settings;$("savedHint").textContent="已保存 ✓";setTimeout(()=>$("savedHint").textContent="",1500);}
+  D.settings=r.settings;$("savedHint").textContent="已保存 ✓";setTimeout(()=>$("savedHint").textContent="",1500);refresh();}
 async function doScan(){
   const btn=$("btnScan");btn.disabled=true;btn.textContent="扫描中…";
   await api("/api/settings",{roots:$("roots").value,deep_video:$("deep").checked,similar_threshold:parseInt($("thr").value||"8")});
@@ -299,13 +311,17 @@ function renderCls(){
   Object.entries(D.stats.cls).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>h+=`<tr><td>${esc(k)}</td><td>${v}</td><td class="dim">${desc[k]||""}</td></tr>`);
   $("clsPanel").innerHTML=h+"</table>";
   drawClsGrid();}
+function decMatch(f,sel){
+  const v=$(sel).value;if(!v)return true;
+  const a=(DEC[f.path]||{}).action;
+  return v==="none"? !a : a===v;}
 function drawClsGrid(){
   const k=$("clsSel").value;
-  const list=D.files.filter(f=>f.cls===k);
+  const list=D.files.filter(f=>f.cls===k && decMatch(f,"decSel"));
   $("clsCount").textContent=`共 ${list.length} 个,显示 ${Math.min((clsPage+1)*60,list.length)}`;
   $("clsGrid").innerHTML=list.slice(0,(clsPage+1)*60).map(f=>card(f)).join("");
   $("clsMore").style.display=list.length>(clsPage+1)*60?"":"none";}
-$("clsSel").onchange=()=>{clsPage=0;drawClsGrid();};
+$("clsSel").onchange=$("decSel").onchange=()=>{clsPage=0;drawClsGrid();};
 async function batchCls(a){
   const k=$("clsSel").value;const paths=D.files.filter(f=>f.cls===k).map(f=>f.path);
   if(!paths.length||!confirm(`将 ${paths.length} 个「${k}」标记为 ${a==="recycle"?"回收站":"保留"}?`))return;
@@ -314,6 +330,7 @@ async function batchCls(a){
 /* ---------- 重复/相似组 ---------- */
 function groupHtml(g,recKey,title,confirmFn,pickFn){
   const key=recKey+g.id;
+  const marked=g.members.filter(m=>DEC[m.path]).length;
   const shown=EXP[key]?g.members:g.members.slice(0,8);
   const ms=shown.map(m=>`<div class="m ${m.path===g[recKey].path?"keeper":""}">
       <img class="thumb" loading="lazy" src="${thumb(m.path)}">
@@ -322,6 +339,7 @@ function groupHtml(g,recKey,title,confirmFn,pickFn){
   const more=g.members.length>shown.length
     ?`<div class="m" style="display:flex;align-items:center;justify-content:center"><button onclick="expToggle('${key}')">展开全部 ${g.members.length} 张</button></div>`:"";
   return `<div class="grp"><b>${title} ${g.id.slice(0,6)}</b> <span class="dim">${g.members.length} 个文件</span>
+    ${marked?`<span class="badge rec">已标记 ${marked}/${g.members.length}</span>`:""}
     <div class="bar" style="margin:4px 0">
       <button class="danger" onclick="${confirmFn}('${g.id}')">确认:其余移入回收站</button>
       <button class="good" onclick="groupKeepAll('${g.id}','${recKey}')">全部保留(不删)</button></div>
@@ -336,13 +354,25 @@ function renderDups(){
     +((D.dupGroups.length>200)?`<p class="dim">仅显示前 200 组,共 ${D.dupGroups.length} 组。</p>`:"")
     ||(D.stats.total?"<p class='dim'>未发现精确重复 🎉</p>":"");}
 async function dupPick(gid,p){const r=await api("/api/settings",{dup_picks:{...D.settings.dup_picks,[gid]:p}});D.settings=r.settings;renderDups();}
-async function dupConfirm(gid){if(!confirm("确认将其余重复件标记进回收站?(保留者不动)"))return;await api("/api/dupconfirm",{id:gid});refresh();}
+async function dupConfirm(gid){if(!confirm("确认将其余重复件标记进回收站?(保留者和已标保留的不动)"))return;await api("/api/dupconfirm",{id:gid});refresh();}
+async function confirmAll(kind){
+  const groups=kind==="dup"?D.dupGroups:D.simGroups;
+  if(!groups.length){toast("暂无组");return;}
+  if(!confirm("将 "+groups.length+" 个组全部确认(采纳当前保留者/推荐,已标保留的成员不动)?"))return;
+  let done=0;
+  for(const g of groups){
+    const hint=$(kind==="dup"?"dupAllHint":"simAllHint");
+    if(hint)hint.textContent="确认中 "+(done+1)+"/"+groups.length+"…";
+    try{await api(kind==="dup"?"/api/dupconfirm":"/api/simconfirm",{id:g.id});}catch(e){}
+    done++;}
+  const h=$(kind==="dup"?"dupAllHint":"simAllHint");if(h)h.textContent="";
+  toast("已确认 "+done+" 组");refresh();}
 function renderSims(){
   $("simList").innerHTML=D.simGroups.slice(0,200).map(g=>groupHtml(g,"recommended","相似组","simConfirm","simPick")).join("")
     +((D.simGroups.length>200)?`<p class="dim">仅显示前 200 组,共 ${D.simGroups.length} 组。</p>`:"")
     ||(D.stats.total?"<p class='dim'>未发现相似照片 🎉</p>":"");}
 async function simPick(gid,p){const r=await api("/api/settings",{sim_picks:{...D.settings.sim_picks,[gid]:p}});D.settings=r.settings;renderSims();}
-async function simConfirm(gid){if(!confirm("确认将其余相似照片标记进回收站?(推荐那张不动)"))return;await api("/api/simconfirm",{id:gid});refresh();}
+async function simConfirm(gid){if(!confirm("确认将其余相似照片标记进回收站?(推荐那张和已标保留的不动)"))return;await api("/api/simconfirm",{id:gid});refresh();}
 
 /* ---------- 分类归档 ---------- */
 function renderArch(){
@@ -379,14 +409,25 @@ async function aiNameCluster(key){
 function drawArchGrid(){
   const s=$("sugSel").value,c=$("clsSel2").value,t=$("ftext").value.toLowerCase();
   const list=D.files.filter(f=>
-      (!s||((D.suggestions[f.path]||[])[2]||"")===s)&&(!c||f.cls===c)&&(!t||f.path.toLowerCase().includes(t)));
+      (!s||((D.suggestions[f.path]||[])[2]||"")===s)&&(!c||f.cls===c)&&(!t||f.path.toLowerCase().includes(t))&&decMatch(f,"decSel2"));
+  const ct=$("customTarget").value.trim();
   $("archGrid").innerHTML=list.slice(0,(archPage+1)*60).map(f=>{
       const sug=D.suggestions[f.path]||[];
-      const extra=sug[0]==="archive"?`<button onclick="decide('${jsq(f.path)}','archive','${jsq(sug[1]||"")}')">按建议归档</button>`:"";
+      let extra=sug[0]==="archive"?`<button onclick="decide('${jsq(f.path)}','archive','${jsq(sug[1]||"")}')">按建议归档</button>`:"";
+      if(ct)extra+=`<button onclick="decideCustom('${jsq(f.path)}')">归档到此</button>`;
       return card(f,extra);}).join("");
   $("archMore").style.display=list.length>(archPage+1)*60?"":"none";}
-$("sugSel").onchange=$("clsSel2").onchange=()=>{archPage=0;drawArchGrid();};
+$("sugSel").onchange=$("clsSel2").onchange=$("decSel2").onchange=()=>{archPage=0;drawArchGrid();};
 $("ftext").oninput=()=>{archPage=0;drawArchGrid();};
+$("customTarget").oninput=()=>{archPage=0;drawArchGrid();};
+async function decideCustom(p){
+  const ct=$("customTarget").value.trim();if(!ct)return;
+  const f=D.files.find(x=>x.path===p);
+  const tgt=f?joinRoot(f.root,ct):ct;
+  await decide(p,"archive",tgt);}
+function joinRoot(root,rel){
+  const sep=root.includes("\\")?"\\":"/";
+  return root.endsWith("\\")||root.endsWith("/")?root+rel:root+sep+rel;}
 async function autoSuggest(){if(!confirm("按建议为所有可归档/建议清理文件生成决策?(保留类不动,会覆盖手动决策)"))return;
   const r=await api("/api/autosuggest",{});toast(`已生成 ${r.count} 条决策`);refresh();}
 
@@ -421,12 +462,24 @@ function archFiltered(){
       (!s||((D.suggestions[f.path]||[])[2]||"")===s)&&(!c||f.cls===c)&&(!t||f.path.toLowerCase().includes(t)));}
 async function aiTagPage(){
   if(!aiReady()){toast("先在总览页开启云 AI 并填 Key");return;}
-  const list=archFiltered().filter(f=>f.kind!=="doc").slice(0,24);
-  if(!list.length){toast("本页没有可识别文件");return;}
-  toast("🤖 AI 识别中…(约几秒到几十秒)");
-  const r=await api("/api/ai/tag",{paths:list.map(f=>f.path)});
-  if(r.error){toast("AI: "+r.error);return;}
-  toast(`已识别 ${r.applied} 张,调用 ${r.calls} 次`);refresh();}
+  const all=archFiltered().filter(f=>f.kind!=="doc").slice(0,200);
+  if(!all.length){toast("本页没有可识别文件");return;}
+  const chunks=[];for(let i=0;i<all.length;i+=24)chunks.push(all.slice(i,i+24));
+  let applied=0,calls=0,aborted=false;
+  for(let i=0;i<chunks.length;i++){
+    const hint=$("aiRankHint");
+    if(hint)hint.textContent="🤖 AI 识别中 "+(i+1)+"/"+chunks.length+" 批…";
+    try{const r=await api("/api/ai/tag",{paths:chunks[i].map(f=>f.path)});
+      if(r.error){toast("AI: "+r.error);aborted=true;break;}
+      applied+=r.applied;calls+=r.calls;}
+    catch(e){toast("AI 调用失败:"+e.message);aborted=true;break;}}
+  const h=$("aiRankHint");if(h)h.textContent="";
+  toast("已识别 "+applied+" 张,调用 "+calls+" 次"+(aborted?"(中途停止)":""));refresh();}
+async function aiPing(){
+  try{const r=await api("/api/ai/ping",{});
+    if(r.error){toast("AI: "+r.error);return;}
+    toast("连接正常("+r.model+"),模型回复:"+(r.reply||"(空)"));}
+  catch(e){toast("AI: 连接失败,请检查 Key/模型/网络");}}
 async function aiApplyRecycle(){
   const ps=D.files.filter(f=>f.ai&&f.ai.suggest==="可删").map(f=>f.path);
   if(!ps.length){toast("暂无 AI 建议删除项(先跑 AI 识别)");return;}
@@ -475,9 +528,11 @@ function pickAdd(){
   closePicker();toast("已添加:"+p);}
 
 document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>setTab(+b.dataset.t));
-function setTab(i){document.querySelectorAll(".tabs button").forEach(x=>x.classList.toggle("on",+x.dataset.t===i));
+function setTab(i){try{localStorage.setItem("pshuli_tab",i)}catch(e){}
+  document.querySelectorAll(".tabs button").forEach(x=>x.classList.toggle("on",+x.dataset.t===i));
   for(let j=0;j<6;j++)$("t"+j).style.display=(i===j)?"":"none";
   if(i===5)loadPlan();}
+try{const saved=parseInt(localStorage.getItem("pshuli_tab"));if(saved>=0&&saved<=5)setTab(saved);}catch(e){}
 refresh();
 </script>
 </body>
