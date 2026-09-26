@@ -310,3 +310,26 @@ def find_drives():
         if home != "/":
             drives.append(home)
     return drives
+
+
+def date_from_name(name):
+    """从文件名提取日期(准确性兜底第二优先级):IMG_20230611_123456 /
+    2023-06-11 / Screenshot_20260101-121314 / WX20230611 等。
+    返回 "YYYY-MM-DD" 或 ""(月份/日期非法时返回空)。"""
+    import re as _re
+    stem = os.path.splitext(str(name))[0]
+    m = _re.search(r"(20\d{2})[-_.](\d{2})[-_.](\d{2})", stem)
+    if not m:
+        m = _re.search(r"(20\d{2})(\d{2})(\d{2})", stem)
+    if not m:
+        return ""
+    y, mo, d = m.group(1), m.group(2), m.group(3)
+    if not ("01" <= mo <= "12" and "01" <= d <= "31"):
+        return ""
+    return f"{y}-{mo}-{d}"
+
+
+def year_month_of(dt):
+    """'YYYY-MM-DD ...' → 'YYYY-MM' 或 ''"""
+    d = norm_dt(dt).replace("(继承)", "").strip()
+    return d[:7] if len(d) >= 7 and d[4:5] == "-" else ""

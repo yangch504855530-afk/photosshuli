@@ -90,12 +90,17 @@
         <span class="dim">或直接粘贴(支持换行/逗号分隔,自动去引号)</span>
       </div>
       <textarea id="roots" rows="3" style="width:100%;margin:8px 0" placeholder="例如 D:\照片&#10;E:\重要文件\Photos"></textarea>
+      <div class="bar" style="margin:8px 0">
+        <span class="dim">统一归档库(可选):</span>
+        <input id="archRoot" size="28" placeholder="留空=在各扫描根内归档;填入则全部照片聚拢到此库">
+      </div>
       <h3>② 扫描选项</h3>
       <div class="bar">
         <label><input type="checkbox" id="deep" checked> 读取视频元数据(较慢)</label>
         <label><input type="checkbox" id="incr" checked> 增量扫描(未变化文件秒过)</label>
         相似阈值 <input id="thr" type="number" min="0" max="32" style="width:52px" value="8">
         <button class="primary" id="btnScan" onclick="doScan()">开始扫描</button>
+        <button id="btnStop" onclick="stopScan()" style="display:none">⏹ 停止</button>
       </div>
       <div class="dim" id="scanst" style="margin-top:6px">扫描只读文件用于索引与缩略图,不会移动/删除任何文件。</div>
     </div>
@@ -119,6 +124,7 @@
       </div>
       <div class="dim">不开启时一切功能照常走本地规则。用于:相似组 AI 择优、内容打标、地点簇命名。</div>
     </div>
+    <div class="panel" id="rootStatPanel" style="display:none"><h3>已索引目录</h3><div id="rootStats"></div></div>
     <div class="panel" id="clsStatPanel" style="display:none"><h3>内容构成</h3><div id="statBody"></div></div>
   </div>
 
@@ -252,7 +258,15 @@ function renderOverview(){
   $("aiKey").value=D.settings.ai_key||"";
   $("aiModel").value=D.settings.ai_model||"";
   $("aiCap").value=D.settings.ai_daily_cap||300;
-  const sp=$("clsStatPanel");
+  $("archRoot").value=D.settings.archive_root||"";
+  const sp=$("clsStatPanel"),rp=$("rootStatPanel");
+  if(D.roots&&D.roots.length&&D.stats.total){rp.style.display="";
+    const agg={};D.files.forEach(f=>{agg[f.root]=agg[f.root]||[0,0];agg[f.root][0]++;agg[f.root][1]+=f.size;});
+    let rh=`<table><tr><th>目录</th><th>文件数</th><th>体积</th></tr>`;
+    Object.entries(agg).sort((a,b)=>b[1][0]-a[1][0]).forEach(([k,v])=>
+      rh+=`<tr><td class="dim">${esc(k)}</td><td>${v[0]}</td><td>${fmtB(v[1])}</td></tr>`);
+    $("rootStats").innerHTML=rh+"</table>";}
+  else rp.style.display="none";
   if(D.stats.total){sp.style.display="";
     const byc={};D.files.forEach(f=>{byc[f.cls]=byc[f.cls]||[0,0];byc[f.cls][0]++;byc[f.cls][1]+=f.size;});
     let h=`<table><tr><th>内容类别</th><th>数量</th><th>体积</th></tr>`;
@@ -261,7 +275,7 @@ function renderOverview(){
     $("statBody").innerHTML=h+"</table>";}
 }
 async function saveSettings(){
-  const r=await api("/api/settings",{priorities:$("prios").value,similar_threshold:parseInt($("thr").value||"8"),deep_video:$("deep").checked});
+  const r=await api("/api/settings",{priorities:$("prios").value,similar_threshold:parseInt($("thr").value||"8"),deep_video:$("deep").checked,archive_root:$("archRoot").value.trim()});
   D.settings=r.settings;$("savedHint").textContent="已保存 ✓";setTimeout(()=>$("savedHint").textContent="",1500);refresh();}
 async function doScan(){
   const btn=$("btnScan");btn.disabled=true;btn.textContent="扫描中…";
@@ -351,11 +365,12 @@ function groupHtml(g,recKey,title,confirmFn,pickFn){
   const shown=EXP[key]?g.members:g.members.slice(0,8);
   const ms=shown.map(m=>`<div class="m ${m.path===g[recKey].path?"keeper":""}">
       <img class="thumb" loading="lazy" src="${thumb(m.path)}">
-      <div class="cap">${esc(m.rel)} · ${fmtB(m.size)}${m.score?` · 评分${m.score}`:""}<br>${esc(m.root)}</div>
+      <div class="cap">${esc(m.rel)} · ${fmtB(m.size)}${m.score?` · 评分${m.score}`:""}${g.dists&&g.dists[m.path]!==undefined?` · 相似度 ${g.dists[m.path]}/64`:""}<br>${esc(m.root)}</div>
       <button onclick="${pickFn}('${g.id}','${jsq(m.path)}')">留这张</button></div>`).join("");
+  const md5badge=g.hash?` <span class="badge">MD5 ${esc(g.hash.slice(0,8))}…</span>`:"";
   const more=g.members.length>shown.length
     ?`<div class="m" style="display:flex;align-items:center;justify-content:center"><button onclick="expToggle('${key}')">展开全部 ${g.members.length} 张</button></div>`:"";
-  return `<div class="grp"><b>${title} ${g.id.slice(0,6)}</b> <span class="dim">${g.members.length} 个文件</span>
+  return `<div class="grp"><b>${title} ${g.id.slice(0,6)}</b> <span class="dim">${g.members.length} 个文件</span>${md5badge}
     ${marked?`<span class="badge rec">已标记 ${marked}/${g.members.length}</span>`:""}
     <div class="bar" style="margin:4px 0">
       <button class="danger" onclick="${confirmFn}('${g.id}')">确认:其余移入回收站</button>
@@ -375,7 +390,13 @@ async function dupConfirm(gid){if(!confirm("确认将其余重复件标记进回
 async function confirmAll(kind){
   const groups=kind==="dup"?D.dupGroups:D.simGroups;
   if(!groups.length){toast("暂无组");return;}
-  if(!confirm("将 "+groups.length+" 个组全部确认(采纳当前保留者/推荐,已标保留的成员不动)?"))return;
+  let n=0;
+  groups.forEach(g=>{
+    const keepKey=kind==="dup"?"keeper":"recommended";
+    g.members.forEach(m=>{
+      if(m.path!==g[keepKey].path && (DEC[m.path]||{}).action!=="keep")n++;});});
+  if(!n){toast("没有需要标记的成员(都已保留/已处理)");return;}
+  if(!confirm("将 "+groups.length+" 个组全部确认:预计标记 "+n+" 个文件进回收站决策(保留者与已标保留的不动)?"))return;
   let done=0;
   for(const g of groups){
     const hint=$(kind==="dup"?"dupAllHint":"simAllHint");

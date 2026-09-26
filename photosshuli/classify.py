@@ -35,16 +35,21 @@ def build_clusters(files):
     return sorted(out.values(), key=lambda x: -x["count"])
 
 
-def suggest(rec, cluster_names, root):
+def suggest(rec, cluster_names, root, archive_root=None):
     """返回 (动作, 目标目录或None, 说明)。
-    动作: recycle(建议回收) / archive(归档,带目标) / keep(不动) """
+    动作: recycle(建议回收) / archive(归档,带目标) / keep(不动)。
+    archive_root:统一归档主库(分散多根时把照片聚拢到一个库);空=各 root 内归档。
+    时间优先级:EXIF 拍摄时间 > 文件名日期 > mtime 年份(三无兜底)。"""
     cls = rec.get("cls") or ""
     rel = rec.get("rel", "")
+    base = archive_root or root
+    eff_dt = rec.get("dt") or util.date_from_name(rec.get("name") or "")
     if cls in C.RECYCLE_SUGGESTED:
         return ("recycle", None, f"{cls}·建议清理")
     if cls == C.CLS_DASHCAM:
-        year = util.year_of(rec.get("dt")) or (rec.get("mtime_dt") or "")[:4] or "未知时间"
-        tgt = os.path.join(root, "行车记录仪", year)
+        year = util.year_of(rec.get("dt")) or util.year_of(
+            util.date_from_name(rec.get("name") or "")) or (rec.get("mtime_dt") or "")[:4] or "未知时间"
+        tgt = os.path.join(base, "行车记录仪", year)
         if _inside(rec.get("path"), tgt):
             return ("keep", None, "已在归档位置,无需移动")
         return ("archive", tgt, "事物:行车记录仪")
@@ -52,15 +57,16 @@ def suggest(rec, cluster_names, root):
         key = rec.get("cluster") or cluster_key(rec["lat"], rec["lon"])
         name = cluster_names.get(key) or f"地点{key}"
         month = util.month_of(rec.get("dt")) or "未知时间"
-        tgt = os.path.join(root, "旅行", name, f"{month} {name}")
+        tgt = os.path.join(base, "旅行", name, f"{month} {name}")
         if _inside(rec.get("path"), tgt):
             return ("keep", None, "已在归档位置,无需移动")
         return ("archive", tgt, f"地点:{name}({month})")
-    if rec.get("dt"):
-        year = util.year_of(rec.get("dt"))
+    if eff_dt:
+        year = util.year_of(eff_dt)
+        src = "时间" if rec.get("dt") else "文件名日期"
         if year:
-            return ("archive", os.path.join(root, year), f"时间:{year}")
+            return ("archive", os.path.join(base, year), f"{src}:{year}")
     year = (rec.get("mtime_dt") or "")[:4]
     if year.isdigit():
-        return ("archive", os.path.join(root, year), f"三无·按年份{year}归档")
+        return ("archive", os.path.join(base, year), f"三无·按年份{year}归档")
     return ("keep", None, "无法判断")

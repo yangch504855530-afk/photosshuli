@@ -58,6 +58,7 @@ class Store:
         s.setdefault("ai_model", aimod_default_model())
         s.setdefault("ai_base_url", "https://open.bigmodel.cn/api/paas/v4")
         s.setdefault("ai_daily_cap", 300)
+        s.setdefault("archive_root", "")
         s.setdefault("sim_ai_reasons", {})
         return s
 

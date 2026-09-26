@@ -26,9 +26,9 @@ def find_exact_dups(files, progress=None):
             except OSError:
                 continue
             by_hash[h].append(f)
-        for lst in by_hash.values():
+        for h, lst in by_hash.items():
             if len(lst) > 1:
-                groups.append(lst)
+                groups.append({"hash": h, "members": lst})
     return groups
 
 

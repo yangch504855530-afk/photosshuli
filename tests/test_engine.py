@@ -125,10 +125,11 @@ class TestDuplicates(FixtureMixin, unittest.TestCase):
         groups = duplicates.find_exact_dups(files)
         self.assertEqual(len(groups), 1)
         g = groups[0]
-        self.assertEqual(len(g), 3)
-        keeper = duplicates.pick_keeper(g, [self.a, self.b])
+        self.assertEqual(len(g["members"]), 3)
+        self.assertTrue(g["hash"])
+        keeper = duplicates.pick_keeper(g["members"], [self.a, self.b])
         self.assertEqual(keeper["path"], os.path.join(self.a, "IMG_0001.jpg"))
-        keeper2 = duplicates.pick_keeper(g, [self.b, self.a])
+        keeper2 = duplicates.pick_keeper(g["members"], [self.b, self.a])
         self.assertTrue(keeper2["path"].startswith(self.b))
 
 

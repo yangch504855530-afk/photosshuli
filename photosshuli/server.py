@@ -29,6 +29,7 @@ class App:
         self._preheat_busy = False
         self._preheat_thread = None
         self._preheat_pause.set()
+        self._scan_cancel = threading.Event()
 
     # ---------- AI(智谱 BigModel) ----------
     def make_ai_client(self):
@@ -119,7 +120,9 @@ class App:
             self.scan_status.update(running=False, error="目录不存在:请检查路径(注意去掉引号,使用绝对路径)")
             return
         self.scan_status.update(running=True, done=0, total=0, files=0,
-                                reused=0, fresh=0, error="", stale=False)
+                                reused=0, fresh=0, error="", stale=False,
+                                cancelled=False)
+        self._scan_cancel.clear()
 
         def prog(done, total):
             self.scan_status.update(done=done, total=total)
@@ -149,13 +152,17 @@ class App:
             try:
                 files, info = scanner.scan_roots(
                     roots, deep_video=deep_video, progress=prog,
-                    previous_files=None if force_full else self.files)
+                    previous_files=None if force_full else self.files,
+                    cancel=self._scan_cancel.is_set)
+                cancelled = self._scan_cancel.is_set()
                 with self._lock:
-                    self.files = files
-                    self.roots = roots
-                    self.store.save_index(files, roots)
-                    self.scan_status.update(running=False, files=len(files),
-                                            reused=info["reused"], fresh=info["fresh"])
+                    if not cancelled and files:
+                        self.files = files
+                        self.roots = roots
+                        self.store.save_index(files, roots)
+                    self.scan_status.update(running=False, files=len(self.files),
+                                            reused=info["reused"], fresh=info["fresh"],
+                                            cancelled=cancelled)
                 if files and self.settings.get("auto_preheat", True):
                     self._preheat_thread = threading.Thread(target=preheat, daemon=True)
                     self._preheat_thread.start()
@@ -175,11 +182,12 @@ class App:
         groups = duplicates.find_exact_dups(self.files)
         out = []
         for g in groups:
-            gid = hashlib.md5("|".join(sorted(f["path"] for f in g)).encode()).hexdigest()[:12]
+            members = g["members"]
+            gid = hashlib.md5("|".join(sorted(f["path"] for f in members)).encode()).hexdigest()[:12]
             pick = picks.get(gid)
-            keeper = next((m for m in g if m["path"] == pick), None) or                 duplicates.pick_keeper(g, self._priorities())
-            out.append({"id": gid, "keeper": keeper,
-                        "members": sorted(g, key=lambda f: f["path"])})
+            keeper = next((m for m in members if m["path"] == pick), None) or                 duplicates.pick_keeper(members, self._priorities())
+            out.append({"id": gid, "hash": g["hash"], "keeper": keeper,
+                        "members": sorted(members, key=lambda f: f["path"])})
         return out
 
     def similar_groups(self):
@@ -191,12 +199,15 @@ class App:
             gid = hashlib.md5("|".join(sorted(f["path"] for f in g)).encode()).hexdigest()[:12]
             pick = picks.get(gid)
             rec = next((m for m in g if m["path"] == pick), None) or similar.recommend(g)
-            out.append({"id": gid, "recommended": rec, "members": g})
+            dists = {m["path"]: util.hamming(m["dhash"], rec["dhash"]) for m in g}
+            out.append({"id": gid, "recommended": rec, "members": g, "dists": dists})
         return out
 
     def suggestions(self):
         names = self.settings.get("cluster_names", {})
-        return {f["path"]: classify.suggest(f, names, f["root"]) for f in self.files}
+        aroot = self.settings.get("archive_root") or ""
+        return {f["path"]: classify.suggest(f, names, f["root"], aroot or None)
+                for f in self.files}
 
     def clusters(self):
         return classify.build_clusters(self.files)
@@ -365,12 +376,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 app.run_scan(body.get("roots"), body.get("deep_video"),
                              bool(body.get("force_full")))
                 self._json({"ok": True, "status": app.scan_status})
+            elif self.path == "/api/scan/cancel":
+                app._scan_cancel.set()
+                self._json({"ok": True})
             elif self.path == "/api/settings":
                 s = app.settings
                 old_cluster_names = dict(s.get("cluster_names", {}))
                 for k in ("priorities", "similar_threshold", "cluster_names",
                           "dup_picks", "sim_picks", "deep_video", "auto_preheat",
-                          "ai_consent", "ai_key", "ai_model", "ai_base_url", "ai_daily_cap"):
+                          "ai_consent", "ai_key", "ai_model", "ai_base_url", "ai_daily_cap",
+                          "archive_root"):
                     if k in body:
                         s[k] = body[k]
                 if "roots" in body:
