@@ -14,13 +14,17 @@
   .bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   select,input,button,textarea { font:inherit; padding:4px 8px; border:1px solid var(--line); border-radius:6px; background:#fff; }
   button { cursor:pointer; } button:hover { background:#eef2f7; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
   button.primary { background:var(--brand); color:#fff; border-color:var(--brand); }
   button.danger { color:var(--del); border-color:var(--del); }
   button.good { color:var(--keep); border-color:var(--keep); }
   .tabs { margin-top:6px; display:flex; gap:2px; flex-wrap:wrap; }
   .tabs button { border:0; background:none; padding:5px 12px; border-radius:6px 6px 0 0; color:var(--dim); }
   .tabs button.on { background:#eef2f7; color:var(--txt); font-weight:600; }
+  .tabs .bdg { background:#2d6cdf; color:#fff; border-radius:8px; font-size:11px; padding:0 6px; margin-left:4px; }
   main { padding:12px 14px 60px; }
+  #banner { display:none; background:#fff8e1; border:1px solid #f0e0a0; border-radius:8px; padding:8px 12px; margin:10px 14px 0; }
+  #banner.stale { background:#fdecea; border-color:#f0b9b5; }
   .cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:10px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
   .card .thumb { width:100%; height:160px; object-fit:cover; background:#eceff3; display:block; cursor:zoom-in; }
@@ -29,7 +33,6 @@
   .ln { color:var(--dim); }
   .badge { display:inline-block; font-size:11px; padding:0 6px; border-radius:8px; background:#eef2f7; color:#555; margin:1px 2px 1px 0; }
   .badge.rec { background:#5cb85c; color:#fff; }
-  .badge.del { background:#d9534f; color:#fff; }
   .acts { display:flex; flex-wrap:wrap; gap:4px; padding:6px 8px 8px; }
   .acts button { font-size:12px; padding:2px 8px; }
   .card.is-del { border-color:var(--del); box-shadow:0 0 0 1px var(--del) inset; }
@@ -40,14 +43,24 @@
   th,td { border:1px solid var(--line); padding:6px 10px; text-align:left; font-size:13px; }
   .dim { color:var(--dim); font-size:12px; }
   .panel { background:#fff; border:1px solid var(--line); border-radius:10px; padding:10px; margin-bottom:12px; max-width:980px; }
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; max-width:980px; }
+  .kpi { background:#fff; border:1px solid var(--line); border-radius:10px; padding:10px 12px; }
+  .kpi b { font-size:20px; display:block; }
+  .kpi span { color:var(--dim); font-size:12px; }
   #toast { position:fixed; bottom:16px; right:16px; background:#333; color:#fff; padding:8px 14px; border-radius:8px; opacity:0; transition:.3s; z-index:9; }
   .grp { background:#fff; border:1px solid var(--line); border-radius:10px; padding:10px; margin-bottom:12px; }
   .grp .row { display:flex; gap:10px; overflow-x:auto; padding:6px 0; }
-  .grp .m { min-width:210px; width:210px; border:1px solid var(--line); border-radius:8px; overflow:hidden; position:relative; }
+  .grp .m { min-width:210px; width:210px; border:1px solid var(--line); border-radius:8px; overflow:hidden; flex-shrink:0; }
   .grp .m .thumb { width:100%; height:130px; object-fit:cover; display:block; }
   .grp .m .cap { font-size:11px; padding:4px 6px; color:var(--dim); word-break:break-all; }
   .grp .m button { width:100%; font-size:11px; border:0; border-top:1px solid var(--line); padding:4px; }
   h3 { margin:8px 0 6px; }
+  #pickMask { position:fixed; inset:0; background:rgba(0,0,0,.35); z-index:8; display:none; }
+  #pickDlg { position:fixed; top:8%; left:50%; transform:translateX(-50%); width:min(560px,92vw); max-height:80vh;
+             background:#fff; border-radius:12px; z-index:9; display:none; flex-direction:column; padding:12px; }
+  #pickList { overflow:auto; border:1px solid var(--line); border-radius:8px; min-height:240px; margin:8px 0; }
+  #pickList div { padding:7px 12px; cursor:pointer; border-bottom:1px solid #f2f4f7; }
+  #pickList div:hover { background:#eef2f7; }
 </style>
 </head>
 <body>
@@ -58,54 +71,60 @@
     <span style="flex:1"></span>
     <button class="primary" onclick="doExport()">导出决策</button>
   </div>
-  <div class="tabs">
-    <button data-t="0" class="on">总览与设置</button>
-    <button data-t="1">内容识别</button>
-    <button data-t="2">精确重复</button>
-    <button data-t="3">相似合并</button>
-    <button data-t="4">分类归档</button>
-    <button data-t="5">执行</button>
+  <div class="tabs" id="tabs">
+    <button data-t="0" class="on">总览</button>
+    <button data-t="1">内容识别<span class="bdg" id="b1" style="display:none"></span></button>
+    <button data-t="2">精确重复<span class="bdg" id="b2" style="display:none"></span></button>
+    <button data-t="3">相似合并<span class="bdg" id="b3" style="display:none"></span></button>
+    <button data-t="4">分类归档<span class="bdg" id="b4" style="display:none"></span></button>
+    <button data-t="5">执行<span class="bdg" id="b5" style="display:none"></span></button>
   </div>
 </header>
+<div id="banner"></div>
 <main>
   <div id="t0">
-    <div class="panel"><h3>扫描</h3>
-      <div>扫描目录(每行一个绝对路径):</div>
-      <textarea id="roots" rows="3" style="width:100%"></textarea>
-      <div style="margin:6px 0">
-        <label><input type="checkbox" id="deep"> 深度读取视频元数据(较慢,ffprobe)</label>
-        相似阈值(汉明距离,<input id="thr" type="number" min="0" max="32" style="width:52px"> 越小越严)
-        <button class="primary" onclick="doScan()">开始扫描</button>
-        <span class="dim" id="scanst"></span>
+    <div class="kpis" id="kpis"></div>
+    <div class="panel" style="margin-top:12px"><h3>① 选择要整理的目录</h3>
+      <div class="bar">
+        <button onclick="openPicker()">📁 浏览并添加目录</button>
+        <span class="dim">或直接粘贴(支持换行/逗号分隔,自动去引号)</span>
       </div>
-      <div class="dim">扫描只读文件用于建立索引与缩略图;不会移动/删除任何文件。</div>
+      <textarea id="roots" rows="3" style="width:100%;margin:8px 0" placeholder="例如 D:\照片&#10;E:\重要文件\Photos"></textarea>
+      <h3>② 扫描选项</h3>
+      <div class="bar">
+        <label><input type="checkbox" id="deep" checked> 读取视频元数据(较慢)</label>
+        <label><input type="checkbox" id="incr" checked> 增量扫描(未变化文件秒过)</label>
+        相似阈值 <input id="thr" type="number" min="0" max="32" style="width:52px" value="8">
+        <button class="primary" id="btnScan" onclick="doScan()">开始扫描</button>
+      </div>
+      <div class="dim" id="scanst" style="margin-top:6px">扫描只读文件用于索引与缩略图,不会移动/删除任何文件。</div>
     </div>
     <div class="panel"><h3>重复保留规则(优先级,靠前者优先保留)</h3>
-      <div class="dim">精确重复组内:先比"优先级顺序",再比质量分,再比修改时间。每行一个目录前缀,默认按扫描目录顺序。</div>
-      <textarea id="prios" rows="4" style="width:100%"></textarea>
+      <div class="dim">精确重复组内:先比优先级顺序,再比质量分,再比修改时间。每行一个目录前缀,留空则按扫描目录顺序。</div>
+      <textarea id="prios" rows="3" style="width:100%;margin:6px 0"></textarea>
       <button onclick="saveSettings()">保存设置</button>
+      <span class="dim" id="savedHint"></span>
     </div>
-    <div class="panel" id="statPanel"><h3>统计</h3><div id="statBody" class="dim">先扫描或等待索引加载…</div></div>
+    <div class="panel" id="clsStatPanel" style="display:none"><h3>内容构成</h3><div id="statBody"></div></div>
   </div>
+
   <div id="t1" style="display:none">
     <div class="panel" id="clsPanel"></div>
     <div class="bar"><select id="clsSel"></select>
+      <span class="dim" id="clsCount"></span>
       <button class="danger" onclick="batchCls('recycle')">本类全部→回收站决策</button>
       <button class="good" onclick="batchCls('keep')">本类全部保留</button></div>
     <div class="cards" id="clsGrid" style="margin-top:10px"></div>
+    <div style="margin:10px 0"><button id="clsMore" onclick="clsPage++;drawClsGrid()" style="display:none">加载更多</button></div>
   </div>
-  <div id="t2" style="display:none">
-    <div class="dim" style="margin:4px 0">每组字节完全相同。绿框=保留者(按规则自动选),点组内"留这张"可改;确认后其余标记进回收站。</div>
-    <div id="dupList"></div>
-  </div>
-  <div id="t3" style="display:none">
-    <div class="dim" style="margin:4px 0">相似组按技术质量评分(清晰度/曝光/分辨率)自动预选最佳,点"留这张"可改;确认后其余进回收站。</div>
-    <div id="simList"></div>
-  </div>
+
+  <div id="t2" style="display:none"><div class="dim" style="margin:4px 0">每组字节完全相同。绿框=保留者(按规则自动选),点"留这张"可改;"全部保留"=本组不删任何文件。</div><div id="dupList"></div></div>
+  <div id="t3" style="display:none"><div class="dim" style="margin:4px 0">相似组按技术质量评分自动预选最佳(推荐徽标),确认后其余进回收站决策;"全部保留"=本组不删。</div><div id="simList"></div></div>
+
   <div id="t4" style="display:none">
     <div class="panel">
       <button class="primary" onclick="autoSuggest()">一键采纳全部建议为决策</button>
-      <span class="dim">地点→旅行\地点\月 地点;时间→年份;行车记录仪→专项;截图/聊天/缓存→建议回收站;三无→按年份归档。</span>
+      <span class="dim">地点→旅行\地点\月 地点;时间→年份;行车记录仪→专项;截图/聊天/缓存→建议回收站;三无→按年份归档。采纳后仍可在下方逐张修改。</span>
     </div>
     <div class="panel" id="clusterPanel"></div>
     <div class="bar">
@@ -113,117 +132,197 @@
       <input id="ftext" placeholder="搜文件名" size="10">
     </div>
     <div class="cards" id="archGrid" style="margin-top:10px"></div>
+    <div style="margin:10px 0"><button id="archMore" onclick="archPage++;drawArchGrid()" style="display:none">加载更多</button></div>
   </div>
+
   <div id="t5" style="display:none">
     <div class="panel"><h3>执行预览</h3><div id="planBody" class="dim">载入中…</div>
       <div style="margin-top:8px">
-        <button class="primary" onclick="doApply()">执行移动(删除项进回收站目录,可找回)</button>
-        <span class="dim">执行前请确认预览;全量日志: .photosshuli/applied_log.csv</span>
+        <button class="primary" id="btnApply" onclick="doApply()">执行移动(删除项进回收站目录,可找回)</button>
+        <span class="dim">执行后建议回到「总览」做一次增量扫描让索引跟上;全量日志: .photosshuli/applied_log.csv</span>
       </div>
     </div>
   </div>
 </main>
+
+<div id="pickMask" onclick="closePicker()"></div>
+<div id="pickDlg">
+  <b>选择目录</b>
+  <div class="bar" style="margin:8px 0">
+    <button onclick="pickGo(document.getElementById('pickPath').value)">⬆ 上级</button>
+    <input id="pickPath" style="flex:1" readonly>
+    <button class="primary" onclick="pickAdd()">添加此目录</button>
+  </div>
+  <div id="pickList"></div>
+  <div class="dim" style="margin-top:6px">单击进入子目录;「添加此目录」把当前目录追加到扫描列表。</div>
+</div>
+
 <div id="toast"></div>
 <script>
-let D=null, DEC={};
+let D=null, DEC={}, clsPage=0, archPage=0, EXP={};
 const $=id=>document.getElementById(id);
 const fmtG=b=>(b/1073741824).toFixed(2)+" GiB", fmtM=b=>(b/1048576).toFixed(1)+" MB";
 const fmtB=b=>b>=1073741824?fmtG(b):fmtM(b);
-const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-const toast=t=>{const e=$("toast");e.textContent=t;e.style.opacity=1;setTimeout(()=>e.style.opacity=0,1800);};
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const jsq=s=>String(s).replace(/\\/g,"\\\\").replace(/'/g,"\\'").replace(/"/g,"&quot;");
+const toast=t=>{const e=$("toast");e.textContent=t;e.style.opacity=1;clearTimeout(e._t);e._t=setTimeout(()=>e.style.opacity=0,2200);};
 async function api(p,body){const o=body?{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}:{};const r=await fetch(p,o);return r.json();}
 const thumb=p=>`/thumb?path=${encodeURIComponent(p)}`;
 
 async function refresh(){D=await (await fetch("/api/data")).json();DEC=D.decisions||{};
   $("ver").textContent="v"+D.version;
-  renderStat();renderOverview();renderCls();renderDups();renderSims();renderArch();loadPlan();}
+  renderStat();renderBanner();renderBadges();renderKpis();renderOverview();
+  renderCls();renderDups();renderSims();renderArch();loadPlan();}
 function renderStat(){
-  const s=D.stats,d=Object.keys(DEC).length;
-  $("stat").textContent=`文件 ${s.total} | 已决策 ${d} | 索引体积 ${fmtB(s.bytes)}`;}
+  const s=D.stats,d=D.counts?D.counts.decided:Object.keys(DEC).length;
+  let t=`文件 ${s.total} | 已决策 ${d}`;
+  if(D.scan&&D.scan.thumbs_total) t+=` | 缩略图 ${D.scan.thumbs_done}/${D.scan.thumbs_total}`;
+  $("stat").textContent=t;}
+function renderBanner(){
+  const b=$("banner");const s=D.scan||{};
+  if(s.stale){b.style.display="block";b.classList.add("stale");
+    b.innerHTML="刚执行过移动,索引已过期。"+`<button onclick="goScan()">立即增量扫描</button>`;return;}
+  b.classList.remove("stale");
+  if(!D.stats.total){b.style.display="block";
+    b.innerHTML="<b>开始使用:</b>到「总览」页 → 点「浏览并添加目录」或粘贴照片文件夹路径 → 点「开始扫描」。全程只读,决策后才会移动文件。";}
+  else b.style.display="none";}
+function goScan(){setTab(0);doScan();}
+function renderBadges(){
+  const c=D.counts||{};
+  const set=(id,v)=>{const e=$(id);if(v>0){e.style.display="";e.textContent=v;}else e.style.display="none";};
+  set("b1",c.recycle_suggested||0);set("b2",c.dup_groups||0);set("b3",c.sim_groups||0);
+  set("b4",(c.archive_suggested||0)+(c.recycle_suggested||0));set("b5",c.decided||0);}
+function renderKpis(){
+  const s=D.stats,c=D.counts||{};
+  let recycleB=0;D.files.forEach(f=>{const d=DEC[f.path];if(d&&d.action==="recycle")recycleB+=f.size;});
+  $("kpis").innerHTML=`
+    <div class="kpi"><b>${s.total}</b><span>文件 / ${fmtB(s.bytes)}</span></div>
+    <div class="kpi"><b>${c.dup_groups||0} 组</b><span>精确重复</span></div>
+    <div class="kpi"><b>${c.sim_groups||0} 组</b><span>相似照片</span></div>
+    <div class="kpi"><b>${c.recycle_suggested||0} 项</b><span>建议清理(截图/缓存等)</span></div>
+    <div class="kpi"><b>${c.archive_suggested||0} 项</b><span>可归档(地点/时间)</span></div>
+    <div class="kpi"><b>${recycleB?fmtB(recycleB):"-"}</b><span>已标记待释放</span></div>
+    <div class="kpi"><b>${s.no_meta}</b><span>三无文件(按年兜底)</span></div>`;}
 function renderOverview(){
   $("roots").value=(D.settings.roots||[]).join("\n");
-  $("prios").value=(D.settings.priorities||D.roots||[]).join("\n");
+  $("prios").value=(D.settings.priorities||[]).join("\n");
   $("thr").value=D.settings.similar_threshold;
   $("deep").checked=!!D.settings.deep_video;
-  const s=D.stats;
-  let h=`<table><tr><th>内容类别</th><th>数量</th></tr>`;
-  Object.entries(s.cls).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>h+=`<tr><td>${esc(k)}</td><td>${v}</td></tr>`);
-  h+=`</table><div class="dim" style="margin-top:6px">三无文件(无时间无地点): ${s.no_meta}</div>`;
-  $("statBody").innerHTML=h;}
+  const sp=$("clsStatPanel");
+  if(D.stats.total){sp.style.display="";
+    const byc={};D.files.forEach(f=>{byc[f.cls]=byc[f.cls]||[0,0];byc[f.cls][0]++;byc[f.cls][1]+=f.size;});
+    let h=`<table><tr><th>内容类别</th><th>数量</th><th>体积</th></tr>`;
+    Object.entries(byc).sort((a,b)=>b[1][0]-a[1][0]).forEach(([k,v])=>
+      h+=`<tr><td>${esc(k)}</td><td>${v[0]}</td><td>${fmtB(v[1])}</td></tr>`);
+    $("statBody").innerHTML=h+"</table>";}
+}
 async function saveSettings(){
-  const r=await api("/api/settings",{priorities:$("prios").value.split("\n").map(x=>x.trim()).filter(Boolean),
-    similar_threshold:parseInt($("thr").value||"8"),deep_video:$("deep").checked});
-  toast("设置已保存");D.settings=r.settings;}
+  const r=await api("/api/settings",{priorities:$("prios").value,similar_threshold:parseInt($("thr").value||"8"),deep_video:$("deep").checked});
+  D.settings=r.settings;$("savedHint").textContent="已保存 ✓";setTimeout(()=>$("savedHint").textContent="",1500);}
 async function doScan(){
-  const roots=$("roots").value.split("\n").map(x=>x.trim()).filter(Boolean);
-  await api("/api/settings",{roots,deep_video:$("deep").checked,similar_threshold:parseInt($("thr").value||"8")});
-  await api("/api/scan",{roots});pollScan();}
-async function pollScan(){
-  const s=await (await fetch("/api/scanstatus")).json();
-  $("scanst").textContent=s.running?`扫描中… ${s.done}/${s.total} 根目录,已索引 ${s.files}`:(s.error?("错误: "+s.error):"完成,共 "+s.files+" 个文件");
-  if(s.running)setTimeout(pollScan,1200);else if(s.files)refresh();}
+  const btn=$("btnScan");btn.disabled=true;btn.textContent="扫描中…";
+  await api("/api/settings",{roots:$("roots").value,deep_video:$("deep").checked,similar_threshold:parseInt($("thr").value||"8")});
+  await api("/api/scan",{roots:$("roots").value,force_full:!$("incr").checked});
+  pollScan(true);}
+function pollScan(first){
+  fetch("/api/scanstatus").then(r=>r.json()).then(s=>{
+    if(s.running){
+      $("scanst").textContent=`扫描中… 已索引 ${s.done}/${s.total||"?"} 个文件(增量复用 ${s.reused||0},新处理 ${s.fresh||0})`;
+      setTimeout(pollScan,1000);return;}
+    $("btnScan").disabled=false;$("btnScan").textContent="开始扫描";
+    if(s.error){$("scanst").textContent="错误: "+s.error;return;}
+    const th=s.thumbs_total?` · 缩略图 ${s.thumbs_done}/${s.thumbs_total}`:"";
+    $("scanst").textContent=`扫描完成:共 ${s.files} 个文件(增量复用 ${s.reused},新处理 ${s.fresh})${th}`;
+    if(!first)refresh();else refresh();});}
 
+/* ---------- 卡片与决策(局部更新,不整页刷新) ---------- */
 function card(f,extraBtns=""){
   const dec=DEC[f.path],cls=dec?(dec.action==="recycle"?"is-del":dec.action==="archive"?"is-arch":"is-keep"):"";
   const sug=D.suggestions[f.path]||[];
-  return `<div class="card ${cls}">
-    <img class="thumb" loading="lazy" src="${thumb(f.path)}" onerror="this.style.opacity=.2" ondblclick="window.open('/media?path=${encodeURIComponent(f.path)}')">
+  return `<div class="card ${cls}" data-path="${esc(f.path)}">
+    <img class="thumb" loading="lazy" src="${thumb(f.path)}" onerror="this.style.opacity=.15" ondblclick="window.open('/media?path=${encodeURIComponent(f.path)}')">
     <div class="meta"><div class="nm" title="${esc(f.path)}">${esc(f.name)}</div>
       <div class="ln">${fmtB(f.size)} · ${f.ext||f.kind} ${f.dur?"· "+f.dur:""}</div>
       <div class="ln">${f.dt?"📅 "+esc(f.dt):(f.mtime_dt?"🕓 "+f.mtime_dt:"")}</div>
       <div><span class="badge">${esc(f.cls)}</span>${f.cluster?`<span class="badge">📍${esc(f.cluster)}</span>`:""}${sug[2]?`<span class="badge">${esc(sug[2])}</span>`:""}</div>
-      <div class="ln">决策: <b>${dec?esc(dec.action+(dec.target?"→"+dec.target:"")):"未决策"}</b></div></div>
+      <div class="ln">决策: <b class="decnow">${dec?esc(dec.action+(dec.target?"→"+dec.target:"")):"未决策"}</b></div></div>
     <div class="acts"><button class="danger" onclick="decide('${jsq(f.path)}','recycle')">回收站</button>
       <button class="good" onclick="decide('${jsq(f.path)}','keep')">保留</button>
-      <button onclick="decide('${jsq(f.path)}','')">取消</button>${extraBtns}</div></div>`;}
-const jsq=s=>s.replace(/\\/g,"\\\\").replace(/'/g,"\\'").replace(/"/g,"&quot;");
-async function decide(p,a,t=""){await api("/api/decide",{path:p,action:a,target:t});refresh();}
+      ${extraBtns}<button onclick="decide('${jsq(f.path)}','')">取消</button></div></div>`;}
+function paintCard(path){
+  const el=document.querySelector(`[data-path="${CSS.escape(path)}"]`);
+  if(!el)return;
+  const dec=DEC[path];
+  el.classList.remove("is-del","is-keep","is-arch");
+  if(dec){const cls=dec.action==="recycle"?"is-del":dec.action==="archive"?"is-arch":"is-keep";el.classList.add(cls);}
+  el.querySelector(".decnow").textContent=dec?(dec.action+(dec.target?"→"+dec.target:"")):"未决策";}
+async function decide(p,a,t=""){
+  const r=await api("/api/decide",{path:p,action:a,target:t});
+  if(a)DEC[p]={action:a,target:t};else delete DEC[p];
+  paintCard(p);renderStat();renderBadges();loadPlan();
+  toast(`已决策 ${r.decided} 项`);}
+async function decideMany(list,a,t=""){
+  await api("/api/batch",{paths:list,action:a,target:t});
+  list.forEach(p=>{if(a)DEC[p]={action:a,target:t};else delete DEC[p];paintCard(p);});
+  renderStat();renderBadges();loadPlan();}
 
+/* ---------- 内容识别 ---------- */
 function renderCls(){
   const sel=$("clsSel");const cur=sel.value;
   sel.innerHTML=Object.entries(D.stats.cls).sort((a,b)=>b[1]-a[1])
     .map(([k,v])=>`<option value="${esc(k)}">${esc(k)} (${v})</option>`).join("");
   if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;
-  drawClsGrid();
-  let h=`<table><tr><th>类别</th><th>数量</th><th>说明</th></tr>`;
   const desc={"截图":"文件名含 Screenshot/截图/截屏","聊天图片":"WeChat/mmexport/QQ 等","疑似缓存缩略图":"文件名或体积特征","行车记录仪":"hiv 编号分段视频","相机照片":"EXIF 带相机型号","无元数据图片":"无 EXIF","实况照片":"livp","视频":"视频文件","文档/其他":"非媒体","无法读取":"打开失败"};
+  let h=`<table><tr><th>类别</th><th>数量</th><th>说明</th></tr>`;
   Object.entries(D.stats.cls).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>h+=`<tr><td>${esc(k)}</td><td>${v}</td><td class="dim">${desc[k]||""}</td></tr>`);
-  $("clsPanel").innerHTML=h+"</table>";}
+  $("clsPanel").innerHTML=h+"</table>";
+  drawClsGrid();}
 function drawClsGrid(){
   const k=$("clsSel").value;
-  $("clsGrid").innerHTML=D.files.filter(f=>f.cls===k).slice(0,200).map(f=>card(f)).join("");}
-$("clsSel").onchange=drawClsGrid;
+  const list=D.files.filter(f=>f.cls===k);
+  $("clsCount").textContent=`共 ${list.length} 个,显示 ${Math.min((clsPage+1)*60,list.length)}`;
+  $("clsGrid").innerHTML=list.slice(0,(clsPage+1)*60).map(f=>card(f)).join("");
+  $("clsMore").style.display=list.length>(clsPage+1)*60?"":"none";}
+$("clsSel").onchange=()=>{clsPage=0;drawClsGrid();};
 async function batchCls(a){
   const k=$("clsSel").value;const paths=D.files.filter(f=>f.cls===k).map(f=>f.path);
   if(!paths.length||!confirm(`将 ${paths.length} 个「${k}」标记为 ${a==="recycle"?"回收站":"保留"}?`))return;
-  await api("/api/batch",{paths,action:a});refresh();}
+  await decideMany(paths,a);toast(`已标记 ${paths.length} 项`);}
 
+/* ---------- 重复/相似组 ---------- */
+function groupHtml(g,recKey,title,confirmFn,pickFn){
+  const key=recKey+g.id;
+  const shown=EXP[key]?g.members:g.members.slice(0,8);
+  const ms=shown.map(m=>`<div class="m ${m.path===g[recKey].path?"keeper":""}">
+      <img class="thumb" loading="lazy" src="${thumb(m.path)}">
+      <div class="cap">${esc(m.rel)} · ${fmtB(m.size)}${m.score?` · 评分${m.score}`:""}<br>${esc(m.root)}</div>
+      <button onclick="${pickFn}('${g.id}','${jsq(m.path)}')">留这张</button></div>`).join("");
+  const more=g.members.length>shown.length
+    ?`<div class="m" style="display:flex;align-items:center;justify-content:center"><button onclick="expToggle('${key}')">展开全部 ${g.members.length} 张</button></div>`:"";
+  return `<div class="grp"><b>${title} ${g.id.slice(0,6)}</b> <span class="dim">${g.members.length} 个文件</span>
+    <div class="bar" style="margin:4px 0">
+      <button class="danger" onclick="${confirmFn}('${g.id}')">确认:其余移入回收站</button>
+      <button class="good" onclick="groupKeepAll('${g.id}','${recKey}')">全部保留(不删)</button></div>
+    <div class="row">${ms}${more}</div></div>`;}
+function expToggle(key){EXP[key]=!EXP[key];renderDups();renderSims();}
+async function groupKeepAll(gid,recKey){
+  const g=(recKey==="keeper"?D.dupGroups:D.simGroups).find(x=>x.id===gid);if(!g)return;
+  await decideMany(g.members.map(m=>m.path),"keep");
+  toast("本组已全部标记保留");}
 function renderDups(){
-  $("dupList").innerHTML=D.dupGroups.slice(0,200).map(g=>{
-    const ms=g.members.map(m=>`<div class="m ${m.path===g.keeper.path?"keeper":""}">
-      <img class="thumb" loading="lazy" src="${thumb(m.path)}">
-      <div class="cap">${esc(m.rel)} · ${fmtB(m.size)}<br>${m.root}</div>
-      <button onclick="dupPick('${g.id}','${jsq(m.path)}')">留这张</button></div>`).join("");
-    return `<div class="grp"><b>重复组 ${g.id.slice(0,6)}</b> <span class="dim">${g.members.length} 个相同文件</span>
-      <div class="row">${ms}</div>
-      <button class="danger" onclick="dupConfirm('${g.id}')">确认:其余移入回收站</button></div>`;}).join("")
-    ||'<p class="dim">未发现精确重复,或尚未扫描。</p>';}
+  $("dupList").innerHTML=D.dupGroups.slice(0,200).map(g=>groupHtml(g,"keeper","重复组","dupConfirm","dupPick")).join("")
+    +((D.dupGroups.length>200)?`<p class="dim">仅显示前 200 组,共 ${D.dupGroups.length} 组。</p>`:"")
+    ||(D.stats.total?"<p class='dim'>未发现精确重复 🎉</p>":"");}
 async function dupPick(gid,p){const r=await api("/api/settings",{dup_picks:{...D.settings.dup_picks,[gid]:p}});D.settings=r.settings;renderDups();}
-async function dupConfirm(gid){if(!confirm("确认将其余重复件标记进回收站?"))return;await api("/api/dupconfirm",{id:gid});refresh();}
-
+async function dupConfirm(gid){if(!confirm("确认将其余重复件标记进回收站?(保留者不动)"))return;await api("/api/dupconfirm",{id:gid});refresh();}
 function renderSims(){
-  $("simList").innerHTML=D.simGroups.slice(0,200).map(g=>{
-    const ms=g.members.map(m=>`<div class="m ${m.path===g.recommended.path?"keeper":""}">
-      <img class="thumb" loading="lazy" src="${thumb(m.path)}">
-      <div class="cap">评分 ${m.score} · ${esc(m.rel)}${m.path===g.recommended.path?' <span class="badge rec">推荐</span>':""}</div>
-      <button onclick="simPick('${g.id}','${jsq(m.path)}')">留这张</button></div>`).join("");
-    return `<div class="grp"><b>相似组 ${g.id.slice(0,6)}</b> <span class="dim">${g.members.length} 张相似</span>
-      <div class="row">${ms}</div>
-      <button class="danger" onclick="simConfirm('${g.id}')">确认:其余移入回收站</button></div>`;}).join("")
-    ||'<p class="dim">未发现相似照片,或尚未扫描。</p>';}
+  $("simList").innerHTML=D.simGroups.slice(0,200).map(g=>groupHtml(g,"recommended","相似组","simConfirm","simPick")).join("")
+    +((D.simGroups.length>200)?`<p class="dim">仅显示前 200 组,共 ${D.simGroups.length} 组。</p>`:"")
+    ||(D.stats.total?"<p class='dim'>未发现相似照片 🎉</p>":"");}
 async function simPick(gid,p){const r=await api("/api/settings",{sim_picks:{...D.settings.sim_picks,[gid]:p}});D.settings=r.settings;renderSims();}
-async function simConfirm(gid){if(!confirm("确认将其余相似照片标记进回收站?"))return;await api("/api/simconfirm",{id:gid});refresh();}
+async function simConfirm(gid){if(!confirm("确认将其余相似照片标记进回收站?(推荐那张不动)"))return;await api("/api/simconfirm",{id:gid});refresh();}
 
+/* ---------- 分类归档 ---------- */
 function renderArch(){
   const sugCount={};D.files.forEach(f=>{const w=(D.suggestions[f.path]||[])[2];if(w)sugCount[w]=(sugCount[w]||0)+1;});
   let h=`<table><tr><th>建议</th><th>文件数</th></tr>`;
@@ -238,34 +337,63 @@ function renderArch(){
   drawArchGrid();}
 function drawArchGrid(){
   const s=$("sugSel").value,c=$("clsSel2").value,t=$("ftext").value.toLowerCase();
-  $("archGrid").innerHTML=D.files.filter(f=>
-      (!s||((D.suggestions[f.path]||[])[2]||"")===s)&&(!c||f.cls===c)&&(!t||f.path.toLowerCase().includes(t)))
-    .slice(0,200).map(f=>{
+  const list=D.files.filter(f=>
+      (!s||((D.suggestions[f.path]||[])[2]||"")===s)&&(!c||f.cls===c)&&(!t||f.path.toLowerCase().includes(t)));
+  $("archGrid").innerHTML=list.slice(0,(archPage+1)*60).map(f=>{
       const sug=D.suggestions[f.path]||[];
       const extra=sug[0]==="archive"?`<button onclick="decide('${jsq(f.path)}','archive','${jsq(sug[1]||"")}')">按建议归档</button>`:"";
-      return card(f,extra);}).join("");}
-$("sugSel").onchange=$("clsSel2").onchange=$("ftext").oninput=drawArchGrid;
-async function autoSuggest(){if(!confirm("按建议为所有可归档/建议清理文件生成决策?(保留类不动)"))return;
+      return card(f,extra);}).join("");
+  $("archMore").style.display=list.length>(archPage+1)*60?"":"none";}
+$("sugSel").onchange=$("clsSel2").onchange=()=>{archPage=0;drawArchGrid();};
+$("ftext").oninput=()=>{archPage=0;drawArchGrid();};
+async function autoSuggest(){if(!confirm("按建议为所有可归档/建议清理文件生成决策?(保留类不动,会覆盖手动决策)"))return;
   const r=await api("/api/autosuggest",{});toast(`已生成 ${r.count} 条决策`);refresh();}
 
+/* ---------- 执行 ---------- */
 async function loadPlan(){const r=await (await fetch("/api/plan")).json();
   const s=r.summary;
+  if(!r.plan.length){$("planBody").innerHTML="<p class='dim'>暂无待执行决策。去其他页签标记后回来。</p>";return;}
   let h=`<table><tr><th>项</th><th>值</th></tr>
     <tr><td>待移动</td><td>${s.count} 项 / ${fmtB(s.bytes)}</td></tr>
     <tr><td>进回收站</td><td>${s.recycle}</td></tr><tr><td>归档</td><td>${s.archive}</td></tr>
     <tr><td>源缺失</td><td>${s.missing}</td></tr></table>
-    <div class="dim" style="margin:6px 0">明细(前80条):</div>`;
-  h+=`<table><tr><th>动作</th><th>源</th><th>目标</th></tr>`+
-    r.plan.slice(0,80).map(p=>`<tr><td>${esc(p.action)}</td><td class="dim">${esc(p.path)}</td><td class="dim">${esc(p.dst)}</td></tr>`).join("")+"</table>";
+    <div class="dim" style="margin:6px 0">明细(每行可撤销,前100条):</div>`;
+  h+=`<table><tr><th>动作</th><th>源</th><th>目标</th><th></th></tr>`+
+    r.plan.slice(0,100).map(p=>`<tr><td>${esc(p.action)}</td><td class="dim">${esc(p.path)}</td><td class="dim">${esc(p.dst)}</td>
+      <td><button onclick="revoke('${jsq(p.path)}')">撤销</button></td></tr>`).join("")+"</table>";
   $("planBody").innerHTML=h;}
-async function doApply(){if(!confirm("确认执行?移动后可在各扫描根目录的 _PhotosShuli回收站 找回。"))return;
-  const r=await api("/api/apply",{execute:true});toast(`完成:成功${r.result.ok} 失败${r.result.fail} 跳过${r.result.skip}`);refresh();loadPlan();}
+async function revoke(p){await decide(p,"");loadPlan();}
+async function doApply(){if(!confirm("确认执行?删除项将移入各扫描根目录的 _PhotosShuli回收站,可找回。"))return;
+  const btn=$("btnApply");btn.disabled=true;
+  const r=await api("/api/apply",{execute:true});btn.disabled=false;
+  toast(`完成:成功${r.result.ok} 失败${r.result.fail} 跳过${r.result.skip}`);
+  refresh();loadPlan();}
 async function doExport(){const r=await api("/api/export");toast(`已导出 ${r.count} 条 → ${r.file}`);}
 
-document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{
-  document.querySelectorAll(".tabs button").forEach(x=>x.classList.remove("on"));b.classList.add("on");
-  for(let i=0;i<6;i++)$("t"+i).style.display=(+b.dataset.t===i)?"":"none";
-  if(+b.dataset.t===5)loadPlan();});
+/* ---------- 目录选择器 ---------- */
+function openPicker(){$("pickMask").style.display="block";$("pickDlg").style.display="flex";
+  fetch("/api/drives").then(r=>r.json()).then(d=>{window._drives=d.drives;pickGo(d.drives[0]||"");});}
+function closePicker(){$("pickMask").style.display="none";$("pickDlg").style.display="none";}
+function pickGo(p){
+  fetch("/api/browse?path="+encodeURIComponent(p)).then(r=>r.json()).then(d=>{
+    if(d.error){toast(d.error);return;}
+    $("pickPath").value=d.path;
+    let h="";
+    if(window._drives)h+=window._drives.map(x=>`<div onclick="pickGo('${jsq(x)}')">💾 ${esc(x)}</div>`).join("");
+    if(d.parent)h+=`<div onclick="pickGo('${jsq(d.parent)}')">⬆ ${esc(d.parent)}</div>`;
+    h+=d.dirs.map(n=>`<div onclick="pickEnter('${jsq(d.path)}','${jsq(n)}')">📁 ${esc(n)}</div>`).join("");
+    $("pickList").innerHTML=h;});}
+function pickEnter(base,name){pickGo(base.endsWith("\\")||base.endsWith("/")?base+name:base+"\\"+name);}
+function pickAdd(){
+  const p=$("pickPath").value;
+  const cur=$("roots").value.split("\n").map(x=>x.trim()).filter(x=>x&&x!==p);
+  cur.push(p);$("roots").value=cur.join("\n");
+  closePicker();toast("已添加:"+p);}
+
+document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>setTab(+b.dataset.t));
+function setTab(i){document.querySelectorAll(".tabs button").forEach(x=>x.classList.toggle("on",+x.dataset.t===i));
+  for(let j=0;j<6;j++)$("t"+j).style.display=(i===j)?"":"none";
+  if(i===5)loadPlan();}
 refresh();
 </script>
 </body>

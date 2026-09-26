@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 """photosshuli 全局配置"""
-VERSION = "0.1.1"
+VERSION = "0.1.2"
 TOOL_NAME = "photosshuli"
 DEFAULT_PORT = 8630
 # 缩略图最长边
 THUMB_SIZE = 360
+# 扫描线程数(None=自动)
+SCAN_WORKERS = None
 
 # 目录内文件大小阈值:低于该值的图片视为疑似缓存缩略图
 CACHE_SIZE_MAX = 64 * 1024

@@ -41,9 +41,10 @@ def classify(rec):
     if ext in C.IMAGE_EXT:
         if by_name:
             return by_name
+        if rec.get("cam"):
+            # 有相机 EXIF 的一律视为真实照片(小体积平滑图也常见于真实拍摄)
+            return C.CLS_CAMERA
         if rec.get("size", 0) < C.CACHE_SIZE_MAX:
             return C.CLS_CACHE
-        if rec.get("cam"):
-            return C.CLS_CAMERA
         return C.CLS_NOEXIF
     return C.CLS_DOC

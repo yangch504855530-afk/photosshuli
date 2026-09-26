@@ -173,9 +173,42 @@ class TestClassify(unittest.TestCase):
 
     def test_thing_and_recycle(self):
         act, tgt, _ = classify.suggest(self.R(cls=C.CLS_DASHCAM), {}, "R")
-        self.assertEqual(tgt, os.path.join("R", "行车记录仪"))
+        self.assertEqual(tgt, os.path.join("R", "行车记录仪", "2026"))
         act, tgt, _ = classify.suggest(self.R(cls=C.CLS_SCREENSHOT), {}, "R")
         self.assertEqual(act, "recycle")
+
+
+class TestUtilNew(unittest.TestCase):
+    def test_parse_roots(self):
+        text = '  "D:\\照片" \nE:\\库;F:\\x, "D:\\照片",  '
+        r = util.parse_roots(text)
+        self.assertEqual(r, ["D:\\照片", "E:\\库", "F:\\x"])
+        self.assertEqual(util.parse_roots(["A", "a", "B"]), ["A", "B"])
+        self.assertEqual(util.parse_roots(""), [])
+        self.assertEqual(util.parse_roots(None), [])
+
+    def test_find_drives(self):
+        d = util.find_drives()
+        self.assertTrue(len(d) >= 1)
+
+
+class TestIncrementalScan(FixtureMixin, unittest.TestCase):
+    def test_reuse_and_change(self):
+        files1, info1 = scanner.scan_roots([self.root], deep_video=False)
+        self.assertEqual(info1["reused"], 0)
+        self.assertEqual(info1["fresh"], 9)
+        files2, info2 = scanner.scan_roots([self.root], deep_video=False,
+                                           previous_files=files1)
+        self.assertEqual(info2["reused"], 9)
+        self.assertEqual(info2["fresh"], 0)
+        # 修改一个文件 → 只重处理该文件(用固定旧时间戳,保证与扫描时的 mtime 不同)
+        os.utime(os.path.join(self.a, "none.jpg"), (1_700_000_000, 1_700_000_000))
+        files3, info3 = scanner.scan_roots([self.root], deep_video=False,
+                                           previous_files=files2)
+        self.assertEqual(info3["fresh"], 1)
+        self.assertEqual(info3["reused"], 8)
+        # 结果一致性:两次扫描的文件数与路径集合一致
+        self.assertEqual({f["path"] for f in files2}, {f["path"] for f in files3})
 
 
 class TestRecycle(FixtureMixin, unittest.TestCase):
@@ -244,6 +277,15 @@ class TestServerEndToEnd(FixtureMixin, unittest.TestCase):
             self.assertTrue(os.path.exists(kept))
             recycle_dir = os.path.join(self.root, C.RECYCLE_DIR)
             self.assertTrue(os.path.isdir(recycle_dir))
+            # 执行后:已移动路径的决策被清空,索引标记 stale
+            data3 = get("/api/data")
+            self.assertTrue(data3["scan"]["stale"])
+            self.assertEqual(data3["counts"]["decided"], 0)
+            # 目录浏览/盘符接口
+            self.assertTrue(len(get("/api/drives")["drives"]) >= 1)
+            br = get("/api/browse?path=" + urllib.parse.quote(self.root))
+            self.assertIn("a", br["dirs"])
+            self.assertIn("b", br["dirs"])
             # 自动建议
             post("/api/autosuggest", {})
             d2 = get("/api/data")

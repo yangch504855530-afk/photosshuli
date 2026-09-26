@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
-"""photosshuli 本地 Web 服务(默认只读,任何删除都是移入回收站目录)"""
+"""photosshuli 本地 Web 服务(默认只读,任何删除都是移入回收站目录)
+v0.1.2:增量/多线程扫描编排、缩略图自动预热、目录浏览、执行后索引失效引导"""
 import hashlib
 import os
+import time
 import threading
 import urllib.parse
 import http.server
 import socketserver
+import webbrowser
 
 from . import config as C
 from . import scanner, duplicates, similar, classify, recycle, util
@@ -18,30 +21,67 @@ class App:
         self.settings = self.store.load_settings()
         self.files = []
         self.roots = []
-        self.scan_status = {"running": False, "done": 0, "total": 0, "files": 0, "error": ""}
+        self.scan_status = {"running": False, "done": 0, "total": 0, "files": 0,
+                            "reused": 0, "fresh": 0, "error": "",
+                            "thumbs_done": 0, "thumbs_total": 0, "stale": False}
         self._lock = threading.Lock()
+        self._preheat_pause = threading.Event()   # set=继续, clear=暂停取新任务
+        self._preheat_busy = False
+        self._preheat_thread = None
+        self._preheat_pause.set()
 
     # ---------- scan ----------
-    def run_scan(self, roots=None, deep_video=None):
-        roots = roots if roots is not None else self.settings["roots"]
+    def run_scan(self, roots=None, deep_video=None, force_full=False):
+        roots = util.parse_roots(roots if roots is not None else self.settings.get("roots"))
+        if roots is not None:
+            self.settings["roots"] = roots
+            self.store.save_settings(self.settings)
         deep_video = self.settings.get("deep_video", True) if deep_video is None else deep_video
-        roots = [r for r in roots if r and os.path.isdir(r)]
+        roots = [r for r in roots if os.path.isdir(r)]
         if not roots:
-            self.scan_status.update(running=False, error="目录不存在,请先在设置里填有效目录")
+            self.scan_status.update(running=False, error="目录不存在:请检查路径(注意去掉引号,使用绝对路径)")
             return
-        self.scan_status.update(running=True, done=0, total=len(roots), files=0, error="")
+        self.scan_status.update(running=True, done=0, total=0, files=0,
+                                reused=0, fresh=0, error="", stale=False)
 
-        def prog(d, t):
-            self.scan_status.update(done=d, total=t)
+        def prog(done, total):
+            self.scan_status.update(done=done, total=total)
+
+        def preheat():
+            need = [f["path"] for f in self.files
+                    if f.get("kind") in ("photo", "video", "livp")]
+            self.scan_status["thumbs_total"] = len(need)
+            self.scan_status["thumbs_done"] = 0
+            for p in need:
+                self._preheat_pause.wait()
+                self._preheat_busy = True
+                try:
+                    tp = self.thumb_path(p)
+                    if not os.path.exists(tp):
+                        os.makedirs(os.path.dirname(tp), exist_ok=True)
+                        try:
+                            util.make_thumb(p, tp)
+                        except Exception:
+                            pass
+                finally:
+                    with self._lock:
+                        self.scan_status["thumbs_done"] += 1
+                        self._preheat_busy = False
 
         def work():
             try:
-                files, _ = scanner.scan_roots(roots, deep_video=deep_video, progress=prog)
+                files, info = scanner.scan_roots(
+                    roots, deep_video=deep_video, progress=prog,
+                    previous_files=None if force_full else self.files)
                 with self._lock:
                     self.files = files
                     self.roots = roots
                     self.store.save_index(files, roots)
-                    self.scan_status.update(running=False, files=len(files))
+                    self.scan_status.update(running=False, files=len(files),
+                                            reused=info["reused"], fresh=info["fresh"])
+                if files and self.settings.get("auto_preheat", True):
+                    self._preheat_thread = threading.Thread(target=preheat, daemon=True)
+                    self._preheat_thread.start()
             except Exception as e:  # noqa: BLE001
                 self.scan_status.update(running=False, error=str(e))
         threading.Thread(target=work, daemon=True).start()
@@ -59,8 +99,7 @@ class App:
         out = []
         for g in groups:
             gid = hashlib.md5("|".join(sorted(f["path"] for f in g)).encode()).hexdigest()[:12]
-            keeper = picks.get(gid) or duplicates.pick_keeper(
-                g, self._priorities())
+            keeper = picks.get(gid) or duplicates.pick_keeper(g, self._priorities())
             out.append({"id": gid, "keeper": keeper,
                         "members": sorted(g, key=lambda f: f["path"])})
         return out
@@ -89,6 +128,17 @@ class App:
     def stats(self):
         return scanner.stats_of(self.files)
 
+    def counts(self):
+        sug = self.suggestions().values()
+        return {
+            "dup_groups": len(self.dup_groups()),
+            "sim_groups": len(self.similar_groups()),
+            "recycle_suggested": sum(1 for s in sug if s[0] == "recycle"),
+            "archive_suggested": sum(1 for s in sug if s[0] == "archive"),
+            "decided": len(self.store.load_decisions()),
+            "no_meta": self.stats()["no_meta"],
+        }
+
     # ---------- thumbs ----------
     def thumb_path(self, path):
         h = hashlib.md5(path.encode("utf-8")).hexdigest()[:16]
@@ -109,7 +159,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
-    # ---------- helpers ----------
     def _send(self, body, code=200, ctype="application/json; charset=utf-8"):
         if isinstance(body, (dict, list)):
             import json
@@ -126,11 +175,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self._send(obj, code)
 
     def _body(self):
-        ln = int(self.headers.get("Content-Length", 0))
         import json
+        ln = int(self.headers.get("Content-Length", 0))
         return json.loads(self.rfile.read(ln) or b"{}")
 
-    # ---------- GET ----------
     def do_GET(self):
         u = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(u.query)
@@ -150,11 +198,33 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     "clusters": app.clusters(),
                     "decisions": app.store.load_decisions(),
                     "stats": app.stats(),
+                    "counts": app.counts(),
                     "scan": app.scan_status,
                     "version": C.VERSION,
                 })
             elif u.path == "/api/scanstatus":
                 self._json(app.scan_status)
+            elif u.path == "/api/drives":
+                self._json({"drives": util.find_drives()})
+            elif u.path == "/api/browse":
+                p = (q.get("path") or [""])[0] or os.path.expanduser("~")
+                p = os.path.normpath(os.path.abspath(p))
+                if not os.path.isdir(p):
+                    self._json({"error": "目录不存在"}, 404)
+                    return
+                dirs = []
+                try:
+                    for n in sorted(os.listdir(p), key=str.lower):
+                        if n.startswith((".", "$")):
+                            continue
+                        full = os.path.join(p, n)
+                        if os.path.isdir(full):
+                            dirs.append(n)
+                except OSError as e:
+                    self._json({"error": str(e)}, 400)
+                    return
+                parent = os.path.dirname(p) if os.path.dirname(p) != p else None
+                self._json({"path": p, "dirs": dirs, "parent": parent})
             elif u.path == "/api/plan":
                 plan = recycle.build_plan(app.files, app.store.load_decisions())
                 self._json({"plan": plan, "summary": recycle.plan_summary(plan)})
@@ -193,22 +263,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except Exception as e:  # noqa: BLE001
             self._json({"error": str(e)}, 400)
 
-    # ---------- POST ----------
     def do_POST(self):
         app = self.app
         try:
             body = self._body()
             if self.path == "/api/scan":
-                app.run_scan(body.get("roots"), body.get("deep_video"))
+                app.run_scan(body.get("roots"), body.get("deep_video"),
+                             bool(body.get("force_full")))
                 self._json({"ok": True, "status": app.scan_status})
-            elif self.path == "/api/scanstatus":
-                self._json(app.scan_status)
             elif self.path == "/api/settings":
                 s = app.settings
-                for k in ("roots", "priorities", "similar_threshold", "cluster_names",
-                          "dup_picks", "sim_picks", "deep_video"):
+                for k in ("priorities", "similar_threshold", "cluster_names",
+                          "dup_picks", "sim_picks", "deep_video", "auto_preheat"):
                     if k in body:
                         s[k] = body[k]
+                if "roots" in body:
+                    s["roots"] = util.parse_roots(body["roots"])
+                if "priorities" in body:
+                    s["priorities"] = util.parse_roots(body["priorities"])
                 app.store.save_settings(s)
                 self._json({"ok": True, "settings": s})
             elif self.path == "/api/decide":
@@ -263,8 +335,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
             elif self.path == "/api/apply":
                 plan = recycle.build_plan(app.files, app.store.load_decisions())
                 if body.get("execute"):
+                    # 防止 Windows 文件锁:暂停缩略图预热,等当前 ffmpeg/解码结束
+                    app._preheat_pause.clear()
+                    waited = 0.0
+                    while app._preheat_busy and waited < 150:
+                        time.sleep(0.2)
+                        waited += 0.2
                     log = os.path.join(app.store.dir, "applied_log.csv")
-                    self._json({"result": recycle.execute(plan, log)})
+                    res = recycle.execute(plan, log)
+                    moved = res.pop("moved", [])
+                    d = app.store.load_decisions()
+                    for p in moved:
+                        d.pop(p, None)
+                    app.store.save_decisions(d)
+                    app.scan_status["stale"] = bool(moved)
+                    self._json({"result": res, "moved": len(moved)})
+                    app._preheat_pause.set()
                 else:
                     self._json({"plan": plan, "summary": recycle.plan_summary(plan)})
             else:
@@ -283,11 +369,25 @@ def make_server(app, port):
     return Server(("127.0.0.1", port), handler)
 
 
-def main(port=None, home=None):
+def main(port=None, home=None, open_browser=True):
     app = App(home)
     app.load_or_scan()
-    httpd = make_server(app, port or C.DEFAULT_PORT)
-    print(f"photosshuli v{C.VERSION} 已启动: http://127.0.0.1:{port or C.DEFAULT_PORT}")
+    port = port or C.DEFAULT_PORT
+    httpd = None
+    for try_port in range(port, port + 10):
+        try:
+            httpd = make_server(app, try_port)
+            port = try_port
+            break
+        except OSError:
+            continue
+    if httpd is None:
+        print(f"端口 {port}~{port + 9} 全部被占用,请用 --port 指定其他端口")
+        return
+    url = f"http://127.0.0.1:{port}"
+    print(f"photosshuli v{C.VERSION} 已启动: {url}  (Ctrl+C 退出)")
+    if open_browser:
+        threading.Timer(0.8, lambda: webbrowser.open(url)).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

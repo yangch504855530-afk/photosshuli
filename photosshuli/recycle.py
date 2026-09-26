@@ -4,6 +4,7 @@ import csv
 import io
 import os
 import shutil
+import time
 
 from . import config as C
 from . import util
@@ -53,7 +54,7 @@ def unique_path(p):
 
 def execute(plan, log_path):
     """执行移动。返回 {ok, fail, skip}"""
-    res = {"ok": 0, "fail": 0, "skip": 0}
+    res = {"ok": 0, "fail": 0, "skip": 0, "moved": []}
     logf = io.open(log_path, "a", encoding="utf-8-sig", newline="")
     w = csv.writer(logf)
     if logf.tell() == 0:
@@ -68,13 +69,22 @@ def execute(plan, log_path):
             w.writerow([t, item["path"], item["action"], item["src"], item["dst"], "原地·跳过"])
             res["skip"] += 1
             continue
-        try:
-            os.makedirs(os.path.dirname(item["dst"]), exist_ok=True)
-            shutil.move(item["src"], unique_path(item["dst"]))
-            w.writerow([t, item["path"], item["action"], item["src"], item["dst"], "OK"])
-            res["ok"] += 1
-        except Exception as e:
-            w.writerow([t, item["path"], item["action"], item["src"], item["dst"], f"失败:{e}"])
+        last_err = None
+        for attempt in range(3):
+            try:
+                os.makedirs(os.path.dirname(item["dst"]), exist_ok=True)
+                shutil.move(item["src"], unique_path(item["dst"]))
+                w.writerow([t, item["path"], item["action"], item["src"], item["dst"], "OK"])
+                res["ok"] += 1
+                res["moved"].append(item["path"])
+                last_err = None
+                break
+            except Exception as e:  # noqa: BLE001
+                last_err = e
+                if attempt < 2:
+                    time.sleep(1.0)  # 文件可能被缩略图/播放器等短暂占用,稍候重试
+        if last_err is not None:
+            w.writerow([t, item["path"], item["action"], item["src"], item["dst"], f"失败:{last_err}"])
             res["fail"] += 1
     logf.close()
     return res

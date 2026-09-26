@@ -265,3 +265,43 @@ def year_of(dt):
 
 def ts():
     return datetime.now().isoformat(timespec="seconds")
+
+
+def parse_roots(text):
+    """解析用户输入的目录列表:支持换行/逗号/分号分隔,自动去引号与空白,去重保序"""
+    if isinstance(text, (list, tuple)):
+        parts = list(text)
+    else:
+        parts = str(text or "").replace("\r", "\n").replace("\n", "\n").split("\n")
+        out2 = []
+        for chunk in parts:
+            out2.extend(chunk.replace(";", ",").split(","))
+        parts = out2
+    out, seen = [], set()
+    for x in parts:
+        x = x.strip().strip('"').strip("'").strip()
+        if not x:
+            continue
+        key = os.path.normcase(os.path.normpath(x))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(x)
+    return out
+
+
+def find_drives():
+    """列出本机盘符(Windows)或常用根(其他系统)"""
+    import string
+    drives = []
+    if os.name == "nt":
+        for ch in string.ascii_uppercase:
+            d = f"{ch}:\\"
+            if os.path.exists(d):
+                drives.append(d)
+    else:
+        drives = ["/"]
+        home = os.path.expanduser("~")
+        if home != "/":
+            drives.append(home)
+    return drives

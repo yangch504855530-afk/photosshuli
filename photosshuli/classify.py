@@ -34,7 +34,8 @@ def suggest(rec, cluster_names, root):
     if cls in C.RECYCLE_SUGGESTED:
         return ("recycle", None, f"{cls}·建议清理")
     if cls == C.CLS_DASHCAM:
-        return ("archive", os.path.join(root, "行车记录仪"), "事物:行车记录仪")
+        year = util.year_of(rec.get("dt")) or (rec.get("mtime_dt") or "")[:4] or "未知时间"
+        return ("archive", os.path.join(root, "行车记录仪", year), "事物:行车记录仪")
     if rec.get("lat") and rec.get("lon"):
         key = rec.get("cluster") or cluster_key(rec["lat"], rec["lon"])
         name = cluster_names.get(key) or f"地点{key}"
