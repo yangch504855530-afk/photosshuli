@@ -11,7 +11,7 @@ import socketserver
 import webbrowser
 
 from . import config as C
-from . import scanner, duplicates, similar, classify, recycle, util
+from . import scanner, duplicates, similar, classify, recycle, util, ai as aimod
 from .store import Store
 
 
@@ -29,6 +29,65 @@ class App:
         self._preheat_busy = False
         self._preheat_thread = None
         self._preheat_pause.set()
+
+    # ---------- AI(智谱 BigModel) ----------
+    def make_ai_client(self):
+        return aimod.AIClient(self.settings.get("ai_key"),
+                              model=self.settings.get("ai_model"),
+                              base_url=self.settings.get("ai_base_url"))
+
+    def _ai_guard(self):
+        """返回错误文案或 None(可用)"""
+        s = self.settings
+        if not s.get("ai_consent"):
+            return "未开启云 AI:请在总览页勾选同意(照片缩略图将上传至智谱 API)"
+        cli = self.make_ai_client()
+        if not cli.ready():
+            return "未配置 API Key:请在总览页 AI 设置里填入智谱 API Key"
+        today = util.ts()[:10]
+        calls = s.get("ai_calls", {})
+        if calls.get("date") != today:
+            calls = {"date": today, "n": 0}
+        cap = int(s.get("ai_daily_cap", 300))
+        if calls["n"] >= cap:
+            return f"今日 AI 调用已达上限({cap}),可在设置中调整"
+        return None
+
+    def _bump_ai_calls(self, n=1):
+        today = util.ts()[:10]
+        calls = self.settings.get("ai_calls", {})
+        if calls.get("date") != today:
+            calls = {"date": today, "n": 0}
+        calls["n"] += n
+        self.settings["ai_calls"] = calls
+        self.store.save_settings(self.settings)
+
+    def _ai_source(self, rec):
+        """AI 用的图片源:优先用已生成的缩略图(更小更快),否则原文件"""
+        tp = self.thumb_path(rec["path"])
+        if os.path.exists(tp):
+            return tp
+        return rec["path"]
+
+    def ai_tag_key(self, rec):
+        return f"{rec.get('size')}:{rec.get('mtime')}"
+
+    def merge_ai_tags(self, files):
+        tags = self.store.load_ai_tags()
+        if not tags:
+            return files
+        # 浅拷贝附加 ai 字段,避免改动索引本体
+        out = []
+        for f in files:
+            t = tags.get(self.ai_tag_key(f))
+            if t:
+                g = dict(f)
+                g["ai"] = {"category": t.get("category"), "tags": t.get("tags"),
+                           "quality": t.get("quality"), "suggest": t.get("suggest")}
+                out.append(g)
+            else:
+                out.append(f)
+        return out
 
     # ---------- scan ----------
     def run_scan(self, roots=None, deep_video=None, force_full=False):
@@ -99,7 +158,8 @@ class App:
         out = []
         for g in groups:
             gid = hashlib.md5("|".join(sorted(f["path"] for f in g)).encode()).hexdigest()[:12]
-            keeper = picks.get(gid) or duplicates.pick_keeper(g, self._priorities())
+            pick = picks.get(gid)
+            keeper = next((m for m in g if m["path"] == pick), None) or                 duplicates.pick_keeper(g, self._priorities())
             out.append({"id": gid, "keeper": keeper,
                         "members": sorted(g, key=lambda f: f["path"])})
         return out
@@ -111,7 +171,8 @@ class App:
         out = []
         for g in groups:
             gid = hashlib.md5("|".join(sorted(f["path"] for f in g)).encode()).hexdigest()[:12]
-            rec = picks.get(gid) or similar.recommend(g)
+            pick = picks.get(gid)
+            rec = next((m for m in g if m["path"] == pick), None) or similar.recommend(g)
             out.append({"id": gid, "recommended": rec, "members": g})
         return out
 
@@ -190,7 +251,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     self._send(f.read(), ctype="text/html; charset=utf-8")
             elif u.path == "/api/data":
                 self._json({
-                    "files": app.files, "roots": app.roots,
+                    "files": app.merge_ai_tags(app.files), "roots": app.roots,
                     "settings": app.settings,
                     "dupGroups": app.dup_groups(),
                     "simGroups": app.similar_groups(),
@@ -204,6 +265,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 })
             elif u.path == "/api/scanstatus":
                 self._json(app.scan_status)
+            elif u.path == "/api/ai/status":
+                s = app.settings
+                calls = s.get("ai_calls", {})
+                cli = app.make_ai_client()
+                self._json({"ready": bool(cli.ready() and s.get("ai_consent")),
+                            "has_key": cli.ready(), "consent": bool(s.get("ai_consent")),
+                            "model": cli.model,
+                            "calls_today": calls.get("n", 0) if calls.get("date") == util.ts()[:10] else 0,
+                            "cap": int(s.get("ai_daily_cap", 300))})
             elif u.path == "/api/drives":
                 self._json({"drives": util.find_drives()})
             elif u.path == "/api/browse":
@@ -274,7 +344,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             elif self.path == "/api/settings":
                 s = app.settings
                 for k in ("priorities", "similar_threshold", "cluster_names",
-                          "dup_picks", "sim_picks", "deep_video", "auto_preheat"):
+                          "dup_picks", "sim_picks", "deep_video", "auto_preheat",
+                          "ai_consent", "ai_key", "ai_model", "ai_base_url", "ai_daily_cap"):
                     if k in body:
                         s[k] = body[k]
                 if "roots" in body:
@@ -332,6 +403,81 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         n += 1
                 app.store.save_decisions(d)
                 self._json({"ok": True, "count": n})
+            elif self.path == "/api/ai/rank":
+                err = app._ai_guard()
+                if err:
+                    self._json({"error": err}, 400)
+                    return
+                gid = body.get("id")
+                g = next((x for x in app.similar_groups() if x["id"] == gid), None)
+                if not g:
+                    self._json({"error": "group not found"}, 404)
+                    return
+                members = g["members"][:aimod.MAX_IMAGES_PER_CALL]
+                entries = [(app._ai_source(m), m["name"]) for m in members]
+                cli = app.make_ai_client()
+                r = cli.rank_group(entries)
+                app._bump_ai_calls(1)
+                best = members[r["best"]]["path"]
+                picks = app.settings.get("sim_picks", {})
+                picks[gid] = best
+                reasons = app.settings.get("sim_ai_reasons", {})
+                reasons[gid] = r["reason"]
+                app.store.save_settings(app.settings)
+                self._json({"ok": True, "best": best, "reason": r["reason"]})
+            elif self.path == "/api/ai/tag":
+                err = app._ai_guard()
+                if err:
+                    self._json({"error": err}, 400)
+                    return
+                by_path = {f["path"]: f for f in app.files}
+                recs = [by_path[p] for p in (body.get("paths") or []) if p in by_path]
+                recs = recs[:48]
+                if not recs:
+                    self._json({"error": "没有可识别的文件"}, 400)
+                    return
+                entries = [(app._ai_source(r), r["name"]) for r in recs]
+                chunks = [entries[i:i + 6] for i in range(0, len(entries), 6)]
+                cli = app.make_ai_client()
+
+                def run_chunk(chunk):
+                    rows = cli.tag_batch(chunk)
+                    return list(zip([c[1] for c in chunk], rows))
+
+                mapped = cli.map_batches(chunks, run_chunk, workers=2)
+                tags = app.store.load_ai_tags()
+                n_applied = 0
+                for chunk, rows in zip(chunks, mapped):
+                    for name, row in rows:
+                        if 0 <= row["i"] < len(chunk):
+                            src_path = chunk[row["i"]][0]
+                            rec = next(r for r in recs if app._ai_source(r) == src_path)
+                            tags[app.ai_tag_key(rec)] = {**row, "time": util.ts(),
+                                                         "model": cli.model}
+                            n_applied += 1
+                app.store.save_ai_tags(tags)
+                app._bump_ai_calls(len(chunks))
+                self._json({"ok": True, "applied": n_applied, "calls": len(chunks)})
+            elif self.path == "/api/ai/namecluster":
+                err = app._ai_guard()
+                if err:
+                    self._json({"error": err}, 400)
+                    return
+                key = body.get("key", "")
+                files = [f for f in app.files if f.get("cluster") == key]
+                files.sort(key=lambda f: -(f.get("score") or 0))
+                sample = files[:4]
+                if not sample:
+                    self._json({"error": "簇为空"}, 404)
+                    return
+                entries = [(app._ai_source(f), f["name"]) for f in sample]
+                cli = app.make_ai_client()
+                name = cli.name_cluster(entries, key)
+                app._bump_ai_calls(1)
+                names = app.settings.get("cluster_names", {})
+                names[key] = name
+                app.store.save_settings(app.settings)
+                self._json({"ok": True, "name": name})
             elif self.path == "/api/apply":
                 plan = recycle.build_plan(app.files, app.store.load_decisions())
                 if body.get("execute"):

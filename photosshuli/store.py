@@ -7,6 +7,14 @@ import os
 from . import config as C
 
 
+def aimod_default_model():
+    try:
+        from .ai import DEFAULT_MODEL
+        return DEFAULT_MODEL
+    except Exception:
+        return "glm-4.6v"
+
+
 def data_dir(home=None):
     d = home or os.environ.get("PHOTOSHULI_HOME") or os.path.join(os.getcwd(), ".photosshuli")
     os.makedirs(d, exist_ok=True)
@@ -42,7 +50,15 @@ class Store:
         s.setdefault("priorities", [])
         s.setdefault("similar_threshold", C.DEFAULT_SIMILAR_THRESHOLD)
         s.setdefault("cluster_names", {})
+        s.setdefault("dup_picks", {})
+        s.setdefault("sim_picks", {})
         s.setdefault("deep_video", True)
+        s.setdefault("ai_consent", False)
+        s.setdefault("ai_key", "")
+        s.setdefault("ai_model", aimod_default_model())
+        s.setdefault("ai_base_url", "https://open.bigmodel.cn/api/paas/v4")
+        s.setdefault("ai_daily_cap", 300)
+        s.setdefault("sim_ai_reasons", {})
         return s
 
     def save_settings(self, s):
@@ -55,6 +71,16 @@ class Store:
     def load_index(self):
         d = _read_json(self.index_path, None)
         return (d or {}).get("files", []), (d or {}).get("roots", [])
+
+    # ---- ai tags ----
+    def ai_tags_path(self):
+        return os.path.join(self.dir, "ai_tags.json")
+
+    def load_ai_tags(self):
+        return _read_json(self.ai_tags_path(), {})
+
+    def save_ai_tags(self, d):
+        _write_json(self.ai_tags_path(), d)
 
     # ---- decisions ----
     def load_decisions(self):

@@ -105,6 +105,19 @@
       <button onclick="saveSettings()">保存设置</button>
       <span class="dim" id="savedHint"></span>
     </div>
+    <div class="panel"><h3>③ AI 识别(可选 · 智谱 BigModel)</h3>
+      <div class="bar">
+        <label><input type="checkbox" id="aiConsent"> 启用云 AI(我同意将所选照片缩略图上传至智谱 API)</label>
+        <span class="dim" id="aiStat"></span>
+      </div>
+      <div class="bar" style="margin-top:6px">
+        API Key <input id="aiKey" type="password" size="24" placeholder="粘贴智谱 API Key(仅存本机)">
+        模型 <input id="aiModel" size="12" placeholder="glm-4.6v">
+        每日上限 <input id="aiCap" type="number" style="width:64px" value="300">
+        <button onclick="saveAI()">保存 AI 设置</button>
+      </div>
+      <div class="dim">不开启时一切功能照常走本地规则。用于:相似组 AI 择优、内容打标、地点簇命名。</div>
+    </div>
     <div class="panel" id="clsStatPanel" style="display:none"><h3>内容构成</h3><div id="statBody"></div></div>
   </div>
 
@@ -119,11 +132,16 @@
   </div>
 
   <div id="t2" style="display:none"><div class="dim" style="margin:4px 0">每组字节完全相同。绿框=保留者(按规则自动选),点"留这张"可改;"全部保留"=本组不删任何文件。</div><div id="dupList"></div></div>
-  <div id="t3" style="display:none"><div class="dim" style="margin:4px 0">相似组按技术质量评分自动预选最佳(推荐徽标),确认后其余进回收站决策;"全部保留"=本组不删。</div><div id="simList"></div></div>
+  <div id="t3" style="display:none">
+  <div class="dim" style="margin:4px 0">相似组按技术质量评分自动预选最佳(推荐徽标),确认后其余进回收站决策;"全部保留"=本组不删。AI 择优会调用智谱视觉模型挑选最符合审美的照片。</div>
+  <div class="bar" style="margin:6px 0"><button onclick="aiRankTop()">🤖 AI 择优前10组</button><span class="dim" id="aiRankHint"></span></div>
+  <div id="simList"></div></div>
 
   <div id="t4" style="display:none">
     <div class="panel">
       <button class="primary" onclick="autoSuggest()">一键采纳全部建议为决策</button>
+      <button onclick="aiTagPage()">🤖 AI 识别本页(≤24张)</button>
+      <button class="danger" onclick="aiApplyRecycle()">应用AI建议:可删项→回收站</button>
       <span class="dim">地点→旅行\地点\月 地点;时间→年份;行车记录仪→专项;截图/聊天/缓存→建议回收站;三无→按年份归档。采纳后仍可在下方逐张修改。</span>
     </div>
     <div class="panel" id="clusterPanel"></div>
@@ -172,7 +190,7 @@ const thumb=p=>`/thumb?path=${encodeURIComponent(p)}`;
 async function refresh(){D=await (await fetch("/api/data")).json();DEC=D.decisions||{};
   $("ver").textContent="v"+D.version;
   renderStat();renderBanner();renderBadges();renderKpis();renderOverview();
-  renderCls();renderDups();renderSims();renderArch();loadPlan();}
+  renderCls();renderDups();renderSims();renderArch();loadPlan();aiStatus();}
 function renderStat(){
   const s=D.stats,d=D.counts?D.counts.decided:Object.keys(DEC).length;
   let t=`文件 ${s.total} | 已决策 ${d}`;
@@ -208,6 +226,10 @@ function renderOverview(){
   $("prios").value=(D.settings.priorities||[]).join("\n");
   $("thr").value=D.settings.similar_threshold;
   $("deep").checked=!!D.settings.deep_video;
+  $("aiConsent").checked=!!D.settings.ai_consent;
+  $("aiKey").value=D.settings.ai_key||"";
+  $("aiModel").value=D.settings.ai_model||"";
+  $("aiCap").value=D.settings.ai_daily_cap||300;
   const sp=$("clsStatPanel");
   if(D.stats.total){sp.style.display="";
     const byc={};D.files.forEach(f=>{byc[f.cls]=byc[f.cls]||[0,0];byc[f.cls][0]++;byc[f.cls][1]+=f.size;});
@@ -244,7 +266,7 @@ function card(f,extraBtns=""){
     <div class="meta"><div class="nm" title="${esc(f.path)}">${esc(f.name)}</div>
       <div class="ln">${fmtB(f.size)} · ${f.ext||f.kind} ${f.dur?"· "+f.dur:""}</div>
       <div class="ln">${f.dt?"📅 "+esc(f.dt):(f.mtime_dt?"🕓 "+f.mtime_dt:"")}</div>
-      <div><span class="badge">${esc(f.cls)}</span>${f.cluster?`<span class="badge">📍${esc(f.cluster)}</span>`:""}${sug[2]?`<span class="badge">${esc(sug[2])}</span>`:""}</div>
+      <div><span class="badge">${esc(f.cls)}</span>${f.cluster?`<span class="badge">📍${esc(f.cluster)}</span>`:""}${sug[2]?`<span class="badge">${esc(sug[2])}</span>`:""}${f.ai?`<span class="badge" style="background:#5b9bd5;color:#fff">🤖${esc(f.ai.category)}</span>`:""}${f.ai&&f.ai.quality&&f.ai.quality!=="无"?`<span class="badge">${esc(f.ai.quality)}</span>`:""}${f.ai&&f.ai.suggest==="可删"?'<span class="badge del">AI建议删</span>':""}</div>
       <div class="ln">决策: <b class="decnow">${dec?esc(dec.action+(dec.target?"→"+dec.target:"")):"未决策"}</b></div></div>
     <div class="acts"><button class="danger" onclick="decide('${jsq(f.path)}','recycle')">回收站</button>
       <button class="good" onclick="decide('${jsq(f.path)}','keep')">保留</button>
@@ -327,7 +349,26 @@ function renderArch(){
   const sugCount={};D.files.forEach(f=>{const w=(D.suggestions[f.path]||[])[2];if(w)sugCount[w]=(sugCount[w]||0)+1;});
   let h=`<table><tr><th>建议</th><th>文件数</th></tr>`;
   Object.entries(sugCount).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>h+=`<tr><td>${esc(k)}</td><td>${v}</td></tr>`);
-  $("clusterPanel").innerHTML=h+"</table>";
+  h+=`</table><div class="dim" style="margin:8px 0 4px">地点簇命名(归档目录名;留空=用坐标):</div>`;
+  h+=`<table><tr><th>坐标簇</th><th>地点名</th><th>文件数</th><th></th></tr>`;
+  (D.clusters||[]).slice(0,50).forEach(c=>{
+    h+=`<tr><td><code>${esc(c.key)}</code></td>
+      <td><input value="${esc((D.settings.cluster_names||{})[c.key]||"")}" placeholder="如:普吉岛" data-ck="${esc(c.key)}" size="12"></td>
+      <td>${c.count}</td>
+      <td><button onclick="aiNameCluster('${jsq(c.key)}')">🤖命名</button></td></tr>`;});
+  h+="</table>";
+  $("clusterPanel").innerHTML=h;
+  $("clusterPanel").querySelectorAll("input[data-ck]").forEach(inp=>inp.onchange=async()=>{
+    const names={...(D.settings.cluster_names||{})};
+    if(inp.value.trim())names[inp.dataset.ck]=inp.value.trim();else delete names[inp.dataset.ck];
+    const r=await api("/api/settings",{cluster_names:names});
+    D.settings=r.settings;toast("地点名已保存");refresh();});}
+async function aiNameCluster(key){
+  if(!aiReady()){toast("先在总览页开启云 AI 并填 Key");return;}
+  toast("🤖 AI 看图起名中…");
+  const r=await api("/api/ai/namecluster",{key});
+  if(r.error){toast("AI: "+r.error);return;}
+  toast(`AI 命名:${r.name}`);refresh();}
   const ssel=$("sugSel"),cur=ssel.value;
   ssel.innerHTML='<option value="">全部建议</option>'+Object.keys(sugCount).sort().map(k=>`<option>${esc(k)}</option>`).join("");
   if(cur)ssel.value=cur;
@@ -348,6 +389,49 @@ $("sugSel").onchange=$("clsSel2").onchange=()=>{archPage=0;drawArchGrid();};
 $("ftext").oninput=()=>{archPage=0;drawArchGrid();};
 async function autoSuggest(){if(!confirm("按建议为所有可归档/建议清理文件生成决策?(保留类不动,会覆盖手动决策)"))return;
   const r=await api("/api/autosuggest",{});toast(`已生成 ${r.count} 条决策`);refresh();}
+
+/* ---------- AI(智谱) ---------- */
+function aiReady(){return !!(D.settings.ai_consent && D.settings.ai_key);}
+async function aiStatus(){
+  try{const r=await (await fetch("/api/ai/status")).json();
+    $("aiStat").textContent = r.ready ? `就绪 · ${r.model} · 今日 ${r.calls_today}/${r.cap}`
+      : (r.has_key ? "已填 Key,但未勾选同意" : "未配置 Key");}
+  catch(e){}}
+async function saveAI(){
+  const r=await api("/api/settings",{ai_consent:$("aiConsent").checked,ai_key:$("aiKey").value.trim(),
+    ai_model:$("aiModel").value.trim()||"glm-4.6v",ai_daily_cap:parseInt($("aiCap").value||"300")});
+  D.settings=r.settings;aiStatus();toast("AI 设置已保存");}
+async function aiRank(gid){
+  if(!aiReady()){toast("先在总览页开启云 AI 并填 Key");return null;}
+  try{const r=await api("/api/ai/rank",{id:gid});
+    if(r.error){toast("AI: "+r.error);return null;}
+    toast("🤖 择优完成:"+(r.reason||""));
+    await refresh();return r;}
+  catch(e){toast("AI 调用失败:"+e.message);return null;}}
+async function aiRankTop(){
+  if(!aiReady()){toast("先在总览页开启云 AI 并填 Key");return;}
+  const gs=D.simGroups.slice(0,10);if(!gs.length){toast("暂无相似组");return;}
+  let done=0;
+  for(const g of gs){$("aiRankHint").textContent=`AI 择优中 ${done+1}/${gs.length}…`;
+    const r=await aiRank(g.id);if(r)done++;}
+  $("aiRankHint").textContent="";toast(`AI 择优完成 ${done}/${gs.length} 组`);}
+function archFiltered(){
+  const s=$("sugSel").value,c=$("clsSel2").value,t=$("ftext").value.toLowerCase();
+  return D.files.filter(f=>
+      (!s||((D.suggestions[f.path]||[])[2]||"")===s)&&(!c||f.cls===c)&&(!t||f.path.toLowerCase().includes(t)));}
+async function aiTagPage(){
+  if(!aiReady()){toast("先在总览页开启云 AI 并填 Key");return;}
+  const list=archFiltered().filter(f=>f.kind!=="doc").slice(0,24);
+  if(!list.length){toast("本页没有可识别文件");return;}
+  toast("🤖 AI 识别中…(约几秒到几十秒)");
+  const r=await api("/api/ai/tag",{paths:list.map(f=>f.path)});
+  if(r.error){toast("AI: "+r.error);return;}
+  toast(`已识别 ${r.applied} 张,调用 ${r.calls} 次`);refresh();}
+async function aiApplyRecycle(){
+  const ps=D.files.filter(f=>f.ai&&f.ai.suggest==="可删").map(f=>f.path);
+  if(!ps.length){toast("暂无 AI 建议删除项(先跑 AI 识别)");return;}
+  if(!confirm(`将 ${ps.length} 个 AI 判定为"可删"的文件标记进回收站?`))return;
+  await decideMany(ps,"recycle");toast(`已标记 ${ps.length} 项`);}
 
 /* ---------- 执行 ---------- */
 async function loadPlan(){const r=await (await fetch("/api/plan")).json();

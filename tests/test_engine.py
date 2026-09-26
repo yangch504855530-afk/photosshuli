@@ -88,9 +88,19 @@ class FixtureMixin:
         with open(os.path.join(self.a, "notes.txt"), "w", encoding="utf-8") as f:
             f.write("hello")
         make_jpeg(os.path.join(self.a, "none.jpg"), size=(900, 700), mode="noise")
+        self._stagger_mtimes()
 
     def tearDown(self):
         shutil.rmtree(self.root, ignore_errors=True)
+
+    def _stagger_mtimes(self):
+        """各文件 mtime 拉开,避免同秒创建导致 size:mtime 类键相互碰撞"""
+        i = 0
+        for dp, _, fns in os.walk(self.root):
+            for fn in fns:
+                p2 = os.path.join(dp, fn)
+                os.utime(p2, (1_790_000_000 + i, 1_790_000_000 + i))
+                i += 1
 
     def scan(self):
         files, _ = scanner.scan_roots([self.root], deep_video=False)

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """photosshuli 全局配置"""
-VERSION = "0.1.2"
+VERSION = "0.1.3"
 TOOL_NAME = "photosshuli"
 DEFAULT_PORT = 8630
 # 缩略图最长边
