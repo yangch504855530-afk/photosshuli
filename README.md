@@ -1,5 +1,9 @@
 # photosshuli
 
+[![CI](https://github.com/yangch504855530-afk/photosshuli/actions/workflows/ci.yml/badge.svg)](https://github.com/yangch504855530-afk/photosshuli/actions/workflows/ci.yml)
+
+[开发流程(SOP)](docs/WORKFLOW.md):一句话触发需求→评审→开发→测试→发布闭环。
+
 本地照片/视频整理工具:内容识别、精确重复清理(带文件夹保留规则)、相似照片合并择优、按"地点/时间/事物"自动归档,三无文件按年份兜底。全程本地运行,任何"删除"都是先移入可找回的回收站目录。
 
 A local-first photo/video organizer (Chinese UI): content recognition, exact-duplicate cleanup with folder retention rules, similar-photo merging with auto best-pick, and place/time/thing archiving with year fallback. Nothing is permanently deleted — files are moved to a recoverable staging folder.
@@ -58,6 +62,13 @@ python -m photosshuli apply --execute           # 执行(不加 --execute 只预
 - 所有移动写入 `applied_log.csv`(时间/源/目标/结果),可按日志反向恢复
 - 执行脚本默认 dry-run,`--execute` 才动手
 
+## v0.1.5 更新(工程与流程)
+
+- 新增标准开发流程 SOP(docs/WORKFLOW.md):需求→评审→开发→测试→发布闭环
+- 新增发布门禁 scripts/check.py(全量测试/泄漏扫描/版本一致性三道门)
+- 新增 GitHub Actions CI(push 自动跑全量测试,Windows+Linux × Python 3.10/3.12)
+- 修正 v0.1.4 包内版本号滞后问题(0.1.3)
+
 ## v0.1.4 更新(刁钻用户专项)
 
 正确性修复(实测抓到):
@@ -96,7 +107,7 @@ python -m photosshuli apply --execute           # 执行(不加 --execute 只预
 - 执行页每行可**撤销**;执行后自动清除已完成决策并提示增量重扫
 - 服务启动自动打开浏览器;端口被占自动顺延;新增 `启动photosshuli.bat` 双击启动
 
-## 已知限制(v0.1.4)
+## 已知限制(v0.1.5)
 
 - "最符合人工审美"采用**技术质量评分**近似(清晰度/曝光/分辨率),非 AI 审美模型;最终以人工确认为准
 - 视频相似比较基于抽帧 dHash;无 ffmpeg 时跳过视频元数据
