@@ -73,7 +73,8 @@ def scan_roots(roots, deep_video=True, progress=None, cancel=None,
         ext = os.path.splitext(p)[1].lower()
         kind = ("photo" if ext in C.IMAGE_EXT else
                 "video" if ext in C.VIDEO_EXT else
-                "livp" if ext in C.LIVP_EXT else "doc")
+                "livp" if ext in C.LIVP_EXT else
+                "raw" if ext in C.RAW_EXT else "doc")
         rec = {
             "root": root, "rel": rel, "path": p, "name": os.path.basename(p),
             "ext": ext, "kind": kind, "size": size, "mtime": mtime,

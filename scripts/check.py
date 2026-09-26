@@ -76,11 +76,15 @@ if not re.match(r"^\d+\.\d+\.\d+$", ver):
 readme = io.open("README.md", encoding="utf-8").read()
 if f"v{ver}" not in readme:
     FAIL.append(f"README 未包含 v{ver} 标记")
-tags = subprocess.run(["git", "tag"], capture_output=True, text=True).stdout.split()
+tags = set(subprocess.run(["git", "tag"], capture_output=True, text=True).stdout.split())
+remote = subprocess.run(["git", "ls-remote", "--tags", "origin"],
+                        capture_output=True, text=True).stdout
+remote_tags = {ln.split("/")[-1] for ln in remote.splitlines() if ln.strip()}
+tags |= remote_tags
 if f"v{ver}" in tags:
-    FAIL.append(f"标签 v{ver} 已存在,请先升版本号")
+    FAIL.append(f"标签 v{ver} 已存在(本地或远端),请先升版本号")
 else:
-    print(f"    ✓ v{ver} 标签可用")
+    print(f"    ✓ v{ver} 标签可用(已核对远端)")
 
 # ---- 结果 ----
 print("\n" + "=" * 46)

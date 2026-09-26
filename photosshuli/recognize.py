@@ -36,6 +36,8 @@ def classify(rec):
         return C.CLS_BROKEN
     if ext == ".livp":
         return C.CLS_LIVE
+    if ext in C.RAW_EXT:
+        return C.CLS_RAW
     if ext in C.VIDEO_EXT:
         return by_name or C.CLS_VIDEO
     if ext in C.IMAGE_EXT:

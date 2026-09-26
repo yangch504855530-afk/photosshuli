@@ -10,6 +10,7 @@ import unittest
 import urllib.request
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from photosshuli import ai as aimod  # noqa: E402
 from photosshuli.server import App, make_server  # noqa: E402

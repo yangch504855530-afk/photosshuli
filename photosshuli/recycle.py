@@ -88,3 +88,51 @@ def execute(plan, log_path):
             res["fail"] += 1
     logf.close()
     return res
+
+
+def find_restorable(log_path):
+    """从执行日志解析可还原项:结果=OK 的移动,且目标文件还在原处。
+    返回 [{path(现位置), src(原位置), action, time}]"""
+    out = []
+    if not os.path.exists(log_path):
+        return out
+    with io.open(log_path, encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            if row.get("结果") != "OK" or row.get("动作") not in ("recycle", "archive"):
+                continue
+            dst, src = row.get("目标") or "", row.get("源") or ""
+            if dst and src and os.path.exists(dst) and not os.path.exists(src):
+                out.append({"path": dst, "src": src,
+                            "action": row.get("动作"), "time": row.get("时间")})
+    out.reverse()  # 最近的在前
+    return out
+
+
+def restore(items, log_path):
+    """把文件移回原位。返回 {ok, fail, skip}"""
+    res = {"ok": 0, "fail": 0, "skip": 0}
+    logf = io.open(log_path, "a", encoding="utf-8-sig", newline="")
+    w = csv.writer(logf)
+    if logf.tell() == 0:
+        w.writerow(["时间", "路径", "动作", "源", "目标", "结果"])
+    for it in items:
+        t = util.ts()
+        src, dst = it["path"], it["src"]
+        try:
+            if not os.path.exists(src):
+                w.writerow([t, src, "还原", src, dst, "源缺失·跳过"])
+                res["skip"] += 1
+                continue
+            if os.path.exists(dst):
+                w.writerow([t, src, "还原", src, dst, "原位已占用·跳过"])
+                res["skip"] += 1
+                continue
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.move(src, dst)
+            w.writerow([t, src, "还原", src, dst, "OK"])
+            res["ok"] += 1
+        except Exception as e:  # noqa: BLE001
+            w.writerow([t, src, "还原", src, dst, f"失败:{e}"])
+            res["fail"] += 1
+    logf.close()
+    return res

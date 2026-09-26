@@ -316,6 +316,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     return
                 parent = os.path.dirname(p) if os.path.dirname(p) != p else None
                 self._json({"path": p, "dirs": dirs, "parent": parent})
+            elif u.path == "/api/restore/list":
+                log = os.path.join(app.store.dir, "applied_log.csv")
+                self._json({"items": recycle.find_restorable(log)})
             elif u.path == "/api/plan":
                 plan = recycle.build_plan(app.files, app.store.load_decisions())
                 self._json({"plan": plan, "summary": recycle.plan_summary(plan)})
@@ -526,6 +529,38 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 names[key] = name
                 app.store.save_settings(app.settings)
                 self._json({"ok": True, "name": name})
+            elif self.path == "/api/restore/list":
+                log = os.path.join(app.store.dir, "applied_log.csv")
+                self._json({"items": recycle.find_restorable(log)})
+            elif self.path == "/api/restore":
+                log = os.path.join(app.store.dir, "applied_log.csv")
+                res = recycle.restore(body.get("items") or [], log)
+                if res["ok"]:
+                    app.scan_status["stale"] = True
+                    app.run_scan()
+                self._json({"result": res})
+            elif self.path == "/api/decide/import":
+                if body.get("csv"):
+                    import csv as _csv
+                    import io as _io
+                    rows = list(_csv.reader(_io.StringIO(body["csv"].replace("﻿", ""))))
+                    rows = rows[1:] if rows and rows[0] and rows[0][0].startswith("路径") else rows
+                else:
+                    rows = body.get("rows") or []
+                d = app.store.load_decisions()
+                n = 0
+                for row in rows:
+                    try:
+                        path, action = row[0].strip(), (row[1] or "").strip()
+                    except Exception:
+                        continue
+                    if not path or action not in ("recycle", "archive", "keep"):
+                        continue
+                    d[path] = {"action": action, "target": (row[2] if len(row) > 2 else "") or "",
+                               "time": util.ts()}
+                    n += 1
+                app.store.save_decisions(d)
+                self._json({"ok": True, "imported": n})
             elif self.path == "/api/ai/ping":
                 r = app.ai_ping()
                 self._json(r, 400 if "error" in r else 200)
@@ -563,19 +598,19 @@ class Server(socketserver.ThreadingTCPServer):
     daemon_threads = True
 
 
-def make_server(app, port):
+def make_server(app, port, host="127.0.0.1"):
     handler = type("H", (Handler,), {"app": app})
-    return Server(("127.0.0.1", port), handler)
+    return Server((host, port), handler)
 
 
-def main(port=None, home=None, open_browser=True):
+def main(port=None, home=None, open_browser=True, lan=False):
     app = App(home)
     app.load_or_scan()
     port = port or C.DEFAULT_PORT
     httpd = None
     for try_port in range(port, port + 10):
         try:
-            httpd = make_server(app, try_port)
+            httpd = make_server(app, try_port, host="0.0.0.0" if lan else "127.0.0.1")
             port = try_port
             break
         except OSError:
@@ -583,7 +618,18 @@ def main(port=None, home=None, open_browser=True):
     if httpd is None:
         print(f"端口 {port}~{port + 9} 全部被占用,请用 --port 指定其他端口")
         return
-    url = f"http://127.0.0.1:{port}"
+    if lan:
+        try:
+            import socket
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            lip = s.getsockname()[0]
+            s.close()
+        except Exception:
+            lip = "本机IP"
+        url = f"http://{lip}:{port}  (局域网可访问,注意同一 WiFi 内任何人都能操作)"
+    else:
+        url = f"http://127.0.0.1:{port}"
     print(f"photosshuli v{C.VERSION} 已启动: {url}  (Ctrl+C 退出)")
     if open_browser:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()

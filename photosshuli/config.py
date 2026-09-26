@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """photosshuli 全局配置"""
-VERSION = "0.1.5"
+VERSION = "0.1.6"
 TOOL_NAME = "photosshuli"
 DEFAULT_PORT = 8630
 # 缩略图最长边
@@ -22,7 +22,9 @@ SKIP_DIRS = {RECYCLE_DIR, ".photosshuli", "$RECYCLE.BIN", "System Volume Informa
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".tif", ".tiff", ".bmp", ".webp"}
 VIDEO_EXT = {".mp4", ".mov", ".m4v", ".avi", ".wmv", ".ts", ".mkv", ".flv"}
 LIVP_EXT = {".livp"}
-MEDIA_EXT = IMAGE_EXT | VIDEO_EXT | LIVP_EXT
+RAW_EXT = {".cr2", ".cr3", ".nef", ".nrw", ".arw", ".dng", ".raf",
+           ".orf", ".rw2", ".pef", ".srw", ".x3f"}
+MEDIA_EXT = IMAGE_EXT | VIDEO_EXT | LIVP_EXT | RAW_EXT
 
 # 内容识别类别
 CLS_CAMERA = "相机照片"        # EXIF 带相机型号
@@ -33,6 +35,7 @@ CLS_CACHE = "疑似缓存缩略图"
 CLS_LIVE = "实况照片"
 CLS_DASHCAM = "行车记录仪"
 CLS_VIDEO = "视频"
+CLS_RAW = "RAW 原片"
 CLS_DOC = "文档/其他"
 CLS_BROKEN = "无法读取"
 

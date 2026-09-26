@@ -123,13 +123,14 @@ class TestConfirmRespectsKeep(FixtureMixin, unittest.TestCase):
             post(base, "/api/decide", {"path": p, "action": "recycle"})
             res = post(base, "/api/apply", {"execute": True})
             self.assertEqual(res["result"]["ok"], 1)
-            # 自动增量重扫应已启动并完成
-            for _ in range(200):
-                st = get(base, "/api/scanstatus")
-                if not st["running"]:
+            # 自动增量重扫:按条件轮询(索引中不再出现该文件)
+            for _ in range(300):
+                d2 = get(base, "/api/data")
+                if (not d2["scan"]["running"] and not d2["scan"]["stale"]
+                        and not any(f["path"] == p for f in d2["files"])):
                     break
                 time.sleep(0.1)
-            self.assertFalse(get(base, "/api/scanstatus")["stale"])
+            self.assertFalse(d2["scan"]["stale"])
             self.assertFalse(os.path.exists(p))
         finally:
             httpd.shutdown()

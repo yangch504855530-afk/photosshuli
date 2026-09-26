@@ -166,12 +166,22 @@
   </div>
 
   <div id="t5" style="display:none">
+    <div class="panel"><h3>🪄 一键整理向导</h3>
+      <div class="bar"><button class="primary" onclick="wizard()">生成推荐方案(自动采纳建议+确认重复/相似组)</button>
+      <span class="dim">已标"保留"的不会被覆盖;生成后回到本页预览,确认后才执行</span></div>
+      <div class="bar" style="margin-top:6px">
+        <button onclick="doExport()">导出决策 CSV</button>
+        <input type="file" id="impFile" accept=".csv" style="display:none" onchange="importDecisions(event)">
+        <button onclick="document.getElementById('impFile').click()">导入决策 CSV</button>
+      </div>
+    </div>
     <div class="panel"><h3>执行预览</h3><div id="planBody" class="dim">载入中…</div>
       <div style="margin-top:8px">
         <button class="primary" id="btnApply" onclick="doApply()">执行移动(删除项进回收站目录,可找回)</button>
-        <span class="dim">执行后建议回到「总览」做一次增量扫描让索引跟上;全量日志: .photosshuli/applied_log.csv</span>
+        <span class="dim">执行后自动增量重扫;全量日志: .photosshuli/applied_log.csv</span>
       </div>
     </div>
+    <div class="panel"><h3>♻ 还原历史(误删后悔药)</h3><div id="restoreBody" class="dim">载入中…</div></div>
   </div>
 </main>
 
@@ -257,12 +267,19 @@ async function doScan(){
   const btn=$("btnScan");btn.disabled=true;btn.textContent="扫描中…";
   await api("/api/settings",{roots:$("roots").value,deep_video:$("deep").checked,similar_threshold:parseInt($("thr").value||"8")});
   await api("/api/scan",{roots:$("roots").value,force_full:!$("incr").checked});
-  pollScan(true);}
+  scanT0=0;pollScan(true);}
+let scanT0=0;
 function pollScan(first){
   fetch("/api/scanstatus").then(r=>r.json()).then(s=>{
     if(s.running){
-      $("scanst").textContent=`扫描中… 已索引 ${s.done}/${s.total||"?"} 个文件(增量复用 ${s.reused||0},新处理 ${s.fresh||0})`;
+      if(!scanT0)scanT0=Date.now();
+      const dt=(Date.now()-scanT0)/1000;
+      const rate=dt>0?s.done/dt:0;
+      const eta=(rate&&s.total)?(s.total-s.done)/rate:0;
+      const etaTxt=eta>90?Math.round(eta/60)+" 分钟":Math.round(eta)+" 秒";
+      $("scanst").textContent=`扫描中… 已索引 ${s.done}/${s.total||"?"} 个文件(新处理 ${s.fresh||0}) · ${rate.toFixed(0)} 文件/秒 · 剩余约 ${etaTxt}`;
       setTimeout(pollScan,1000);return;}
+    scanT0=0;
     $("btnScan").disabled=false;$("btnScan").textContent="开始扫描";
     if(s.error){$("scanst").textContent="错误: "+s.error;return;}
     const th=s.thumbs_total?` · 缩略图 ${s.thumbs_done}/${s.thumbs_total}`:"";
@@ -306,7 +323,7 @@ function renderCls(){
   sel.innerHTML=Object.entries(D.stats.cls).sort((a,b)=>b[1]-a[1])
     .map(([k,v])=>`<option value="${esc(k)}">${esc(k)} (${v})</option>`).join("");
   if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;
-  const desc={"截图":"文件名含 Screenshot/截图/截屏","聊天图片":"WeChat/mmexport/QQ 等","疑似缓存缩略图":"文件名或体积特征","行车记录仪":"hiv 编号分段视频","相机照片":"EXIF 带相机型号","无元数据图片":"无 EXIF","实况照片":"livp","视频":"视频文件","文档/其他":"非媒体","无法读取":"打开失败"};
+  const desc={"截图":"文件名含 Screenshot/截图/截屏","聊天图片":"WeChat/mmexport/QQ 等","疑似缓存缩略图":"文件名或体积特征","行车记录仪":"hiv 编号分段视频","相机照片":"EXIF 带相机型号","无元数据图片":"无 EXIF","实况照片":"livp","RAW 原片":"相机 RAW(.cr2/.nef/.arw/.dng 等)","视频":"视频文件","文档/其他":"非媒体","无法读取":"打开失败"};
   let h=`<table><tr><th>类别</th><th>数量</th><th>说明</th></tr>`;
   Object.entries(D.stats.cls).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>h+=`<tr><td>${esc(k)}</td><td>${v}</td><td class="dim">${desc[k]||""}</td></tr>`);
   $("clsPanel").innerHTML=h+"</table>";
@@ -487,16 +504,57 @@ async function aiApplyRecycle(){
   await decideMany(ps,"recycle");toast(`已标记 ${ps.length} 项`);}
 
 /* ---------- 执行 ---------- */
+async function wizard(){
+  if(!confirm("将自动完成:
+① 按建议生成归档/清理决策
+② 确认所有重复组(采纳保留者)
+③ 确认所有相似组(采纳推荐)
+已标保留的不受影响。之后回到本页预览,确认后才真正移动。继续?"))return;
+  toast("🪄 生成推荐方案中…");
+  let sug=0;
+  try{const r=await api("/api/autosuggest",{});sug=r.count||0;}catch(e){}
+  let dups=0,sims=0;
+  for(const g of (D.dupGroups||[])){try{await api("/api/dupconfirm",{id:g.id});dups++;}catch(e){}}
+  for(const g of (D.simGroups||[])){try{await api("/api/simconfirm",{id:g.id});sims++;}catch(e){}}
+  toast(`推荐方案完成:建议 ${sug} 条 · 重复组 ${dups} · 相似组 ${sims}`);
+  await refresh();setTab(5);}
+async function loadRestore(){
+  try{const r=await (await fetch("/api/restore/list")).json();
+    const its=r.items||[];window._rest=its;
+    if(!its.length){$("restoreBody").innerHTML="<p class='dim'>没有可还原的移动记录(每次移动都会记录原位置,随时可还原)。</p>";return;}
+    $("restoreBody").innerHTML=`<div class="bar"><button class="good" onclick="restoreAll()">全部还原(${its.length})</button><span class="dim">显示前100条</span></div>
+    <table><tr><th></th><th>现位置</th><th>原位置</th><th>动作</th><th></th></tr>`+
+    its.slice(0,100).map((x)=>`<tr><td><img loading="lazy" src="${thumb(x.path)}" style="width:48px;height:32px;object-fit:cover" onerror="this.style.opacity=.1"></td>
+      <td class="dim">${esc(x.path)}</td><td class="dim">${esc(x.src)}</td><td>${esc(x.action)}</td>
+      <td><button onclick="restoreOne('${jsq(x.path)}')">还原</button></td></tr>`).join("")+"</table>";}
+  catch(e){$("restoreBody").textContent="载入失败";}}
+async function restoreOne(p){
+  const x=(window._rest||[]).find(y=>y.path===p);if(!x)return;
+  const r=await api("/api/restore",{items:[x]});
+  toast(`还原 ${r.result.ok} 成功`);loadRestore();refresh();}
+async function restoreAll(){
+  if(!confirm("全部还原 "+(window._rest||[]).length+" 项到原位置?"))return;
+  const r=await api("/api/restore",{items:window._rest});
+  toast("还原 "+r.result.ok+" 成功 / "+r.result.fail+" 失败 / "+r.result.skip+" 跳过");
+  loadRestore();refresh();}
+async function importDecisions(ev){
+  const file=ev.target.files[0];if(!file)return;
+  const csv=await file.text();
+  const r=await api("/api/decide/import",{csv});
+  if(r.error){toast("导入失败:"+r.error);return;}
+  toast("已导入 "+r.imported+" 条决策");ev.target.value="";refresh();}
 async function loadPlan(){const r=await (await fetch("/api/plan")).json();
   const s=r.summary;
-  if(!r.plan.length){$("planBody").innerHTML="<p class='dim'>暂无待执行决策。去其他页签标记后回来。</p>";return;}
+  loadRestore();
+  if(!r.plan.length){$("planBody").innerHTML="<p class='dim'>暂无待执行决策。可用上方「生成推荐方案」,或去其他页签标记后回来。</p>";return;}
   let h=`<table><tr><th>项</th><th>值</th></tr>
     <tr><td>待移动</td><td>${s.count} 项 / ${fmtB(s.bytes)}</td></tr>
     <tr><td>进回收站</td><td>${s.recycle}</td></tr><tr><td>归档</td><td>${s.archive}</td></tr>
     <tr><td>源缺失</td><td>${s.missing}</td></tr></table>
     <div class="dim" style="margin:6px 0">明细(每行可撤销,前100条):</div>`;
-  h+=`<table><tr><th>动作</th><th>源</th><th>目标</th><th></th></tr>`+
-    r.plan.slice(0,100).map(p=>`<tr><td>${esc(p.action)}</td><td class="dim">${esc(p.path)}</td><td class="dim">${esc(p.dst)}</td>
+  h+=`<table><tr><th></th><th>动作</th><th>源</th><th>目标</th><th></th></tr>`+
+    r.plan.slice(0,100).map(p=>`<tr><td><img loading="lazy" src="${thumb(p.path)}" style="width:48px;height:32px;object-fit:cover" onerror="this.style.opacity=.1"></td>
+      <td>${esc(p.action)}</td><td class="dim">${esc(p.path)}</td><td class="dim">${esc(p.dst)}</td>
       <td><button onclick="revoke('${jsq(p.path)}')">撤销</button></td></tr>`).join("")+"</table>";
   $("planBody").innerHTML=h;}
 async function revoke(p){await decide(p,"");loadPlan();}

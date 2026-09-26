@@ -19,6 +19,8 @@ def main():
     sub = ap.add_subparsers(dest="cmd")
     sp = sub.add_parser("server", help="启动 Web 界面")
     sp.add_argument("--port", type=int, default=C.DEFAULT_PORT)
+    sp.add_argument("--lan", action="store_true",
+                    help="允许局域网访问(默认仅本机 127.0.0.1)")
     ss = sub.add_parser("scan", help="扫描目录建立索引")
     ss.add_argument("roots", nargs="+")
     splan = sub.add_parser("plan", help="预览将执行的移动")
@@ -29,7 +31,7 @@ def main():
     store = Store(args.home)
     if args.cmd == "server":
         from . import server
-        server.main(port=args.port, home=args.home)
+        server.main(port=args.port, home=args.home, lan=args.lan)
     elif args.cmd == "scan":
         files, _ = scanner.scan_roots(args.roots)
         store.save_index(files, [os.path.abspath(r) for r in args.roots])
